@@ -4,9 +4,42 @@ import io
 import os
 
 
+def recognize_face(img_data, filename, url="http://192.168.11.24:8088/system/visitorRecord/recognizeFace"):
+    """
+    Sends image data to the face recognition API.
+    
+    Args:
+        img_data (bytes): The binary image data.
+        filename (str): The filename to send with the image.
+        url (str): The API URL.
+        
+    Returns:
+        dict or str: The JSON response or text response, or None on error.
+    """
+    try:
+        # Use only the basename for the filename argument to avoid path issues on server
+        files = {
+            'file': (filename, img_data, 'image/jpeg')
+        }
+        
+        print(f"Sending POST request to {url}...")
+        response = requests.post(url, files=files, timeout=30)
+        
+        print(f"Status Code: {response.status_code}")
+        try:
+            result = response.json()
+            print(f"Response Body: {result}")
+            return result
+        except:
+            print(f"Response Body: {response.text}")
+            return response.text
+            
+    except Exception as e:
+        print(f"Error processing {filename}: {e}")
+        return None
+
 def test_upload_local_images():
-    image_dir = "/home/lzwc/project/ai_warehouse/images"
-    url = "http://192.168.11.24:8088/system/visitorRecord/recognizeFace"
+    image_dir = "./images"
     
     if not os.path.exists(image_dir):
         print(f"Directory {image_dir} does not exist.")
@@ -21,24 +54,10 @@ def test_upload_local_images():
                 with open(file_path, 'rb') as f:
                     img_data = f.read()
                 
-                # Use only the basename for the filename argument to avoid path issues on server
-                # Previous error: "Unable to create temporary file, ...images/20260202-195147.jpg"
-                # suggests that passing a path instead of a filename might cause server-side path concatenation errors.
-                files = {
-                    'file': (filename, img_data, 'image/jpeg')
-                }
-                
-                print(f"Sending POST request to {url}...")
-                response = requests.post(url, files=files, timeout=30)
-                
-                print(f"Status Code: {response.status_code}")
-                try:
-                    print(f"Response Body: {response.json()}")
-                except:
-                    print(f"Response Body: {response.text}")
+                recognize_face(img_data, filename)
                     
             except Exception as e:
-                print(f"Error processing {filename}: {e}")
+                print(f"Error reading {filename}: {e}")
 
 if __name__ == "__main__":
     # test_upload() # Original dummy test

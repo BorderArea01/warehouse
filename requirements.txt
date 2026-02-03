@@ -1,4 +1,0 @@
-requests
-pyserial
-opencv-python-headless
-schedule
