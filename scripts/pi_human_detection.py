@@ -17,14 +17,18 @@ except ImportError:
         print(f"Mock send {filename} (module not found)")
 
 # Configuration
-CONFIDENCE_THRESHOLD = 0.5
+CONFIDENCE_THRESHOLD = 0.6  # Increased from 0.5 to reduce false positives
 TRACKING_TIMEOUT = 5.0  # Seconds to wait after losing sight of person before ending session
+MIN_DETECTION_DURATION = 1.0 # Seconds a person must be detected to count as valid entry (Debounce)
+
 # Check for HEADLESS env var, default to False (show window)
 HEADLESS = os.environ.get('HEADLESS', 'False').lower() == 'true'
 
-# RTSP Configuration
+# RTSP Configuration (For reference / Video Backup)
 # Note: Special characters in password must be URL encoded. '@' -> '%40'
-RTSP_URL = "rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/Channels/101"
+# Original: rtsp://admin:Lzwc@2025.@192.168.13.140:554/Streaming/Channels/101
+# Encoded:  rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/Channels/101
+RTSP_URL_BACKUP = "rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/Channels/101"
 
 # Timezone: Beijing Time (UTC+8)
 BJ_TZ = timezone(timedelta(hours=8))
@@ -35,6 +39,13 @@ DELETE_PROCESSED_IMAGES = True  # Delete images after processing to save SD card
 def get_bj_time():
     """Returns current time in Beijing Timezone."""
     return datetime.now(BJ_TZ)
+
+def trigger_warehouse_recording(action, timestamp):
+    """
+    Mock function to trigger warehouse camera recording.
+    In production, this might call a DVR API or send a signal.
+    """
+    print(f"\n[System] TRIGGER: Warehouse Camera {action} Recording at {timestamp}")
 
 def save_local_record(data):
     """
@@ -68,14 +79,15 @@ def load_model():
 
 def main():
     # Initialize Camera
-    print(f"Connecting to RTSP stream: {RTSP_URL}...")
-    cap = cv2.VideoCapture(RTSP_URL)
+    # Use Local Camera (Index 0) for Face Capture & Detection
+    print(f"Connecting to Local Camera (Index 0)...")
+    cap = cv2.VideoCapture(0)
     
     if not cap.isOpened():
-        print(f"Error: Cannot open RTSP stream. Please check network connection and URL.")
-        print("Attempting fallback to local camera 0...")
-        cap = cv2.VideoCapture(0)
+        print(f"Error: Cannot open Local Camera. Trying Index 1...")
+        cap = cv2.VideoCapture(1)
         if not cap.isOpened():
+            print("Error: Cannot open any camera.")
             return
 
     # Set camera resolution (RTSP streams usually ignore this, but good practice)
@@ -93,6 +105,10 @@ def main():
     last_seen_time = 0
     best_frame = None
     max_confidence_seen = 0.0
+    
+    # Debounce State
+    potential_start_time = 0
+    is_potential_entry = False
 
     try:
         while True:
@@ -127,27 +143,47 @@ def main():
             if person_detected_now:
                 last_seen_time = current_time
                 
+                # Check logic for STARTING a session
                 if not is_tracking:
-                    # START NEW SESSION
-                    print(f"\n[Event] Person Entered. Starting Tracking...")
-                    is_tracking = True
-                    session_start_time = get_bj_time()
-                    max_confidence_seen = 0.0
-                    best_frame = None
-                
+                    if not is_potential_entry:
+                        # First frame of potential person
+                        is_potential_entry = True
+                        potential_start_time = current_time
+                    else:
+                        # Continue potential entry
+                        duration = current_time - potential_start_time
+                        if duration >= MIN_DETECTION_DURATION:
+                            # Confirmed Entry!
+                            is_tracking = True
+                            is_potential_entry = False # Reset debounce
+                            
+                            session_start_time = get_bj_time()
+                            print(f"\n[Event] Person Entered at {session_start_time}. Starting Tracking...")
+                            trigger_warehouse_recording("START", session_start_time)
+                            
+                            max_confidence_seen = 0.0
+                            best_frame = None
+
                 # UPDATE SESSION (Keep the best frame)
-                if current_max_conf > max_confidence_seen:
+                # Only update if we are officially tracking
+                if is_tracking and current_max_conf > max_confidence_seen:
                     max_confidence_seen = current_max_conf
                     best_frame = frame.copy()
 
             else:
                 # No person detected right now
+                
+                # Reset debounce if detection breaks before confirmation
+                if is_potential_entry:
+                    is_potential_entry = False
+                    
                 if is_tracking:
                     # Check if timeout exceeded
                     if current_time - last_seen_time > TRACKING_TIMEOUT:
                         # END SESSION
-                        print(f"[Event] Person Left (Timeout > {TRACKING_TIMEOUT}s). Finalizing Session...")
                         session_end_time = get_bj_time()
+                        print(f"[Event] Person Left at {session_end_time} (Timeout > {TRACKING_TIMEOUT}s). Finalizing Session...")
+                        trigger_warehouse_recording("STOP", session_end_time)
                         
                         # 1. Recognize Face using the best frame collected
                         face_result = None
