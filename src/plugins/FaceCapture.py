@@ -316,7 +316,7 @@ class FaceCapture:
             "person_name": nick_name,
             "event_type": "realtime_identification"
         }
-        self.upload_to_agent(record)
+        # self.upload_to_agent(record) # REMOVED: Only upload when full record is available (in TimeCapture)
         self.save_local_json(record)
         
         # Check Max Count

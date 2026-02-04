@@ -166,34 +166,45 @@ class TimeCapture:
     def report_exit_event(self, end_time: datetime):
         """
         1. Updates local JSONL file with end_time for the last record.
-        2. Calls the Agent to update the DB.
+        2. Calls the Agent to update the DB with the FULL record (start + end).
         """
         end_time_str = end_time.isoformat()
         
-        # 1. Update Local File
-        self.update_local_json_end_time(end_time_str)
+        # 1. Update Local File and Get Full Records
+        closed_records = self.update_local_json_end_time(end_time_str)
         
-        # 2. Call Agent
+        # 2. Call Agent for each closed record
         if not self.to_agent:
             print("[TimeCapture] Agent not available. Cannot report exit.")
             return
 
-        query = f"更新人员进出流水：标记当前仓库内活动结束，结束时间为 {end_time_str}"
-        
-        print(f"[TimeCapture] Invoking Agent: {query}")
-        try:
-            response = self.to_agent.invoke(
-                query=query,
-                business_params={"end_time": end_time_str, "event_type": "exit_confirmation"}
-            )
-            print(f"[TimeCapture] Agent Response: {response}")
-        except Exception as e:
-            print(f"[TimeCapture] Error invoking Agent: {e}")
+        if not closed_records:
+            print("[TimeCapture] No valid records to upload.")
+            return
+
+        for record in closed_records:
+            # We now send the COMPLETE record
+            start_t = record.get('start_time')
+            end_t = record.get('end_time')
+            face_res = record.get('face_result', {})
+            
+            query = f"记录人员进出流水：开始时间 {start_t}, 结束时间 {end_t}, 人脸识别结果 {json.dumps(face_res, ensure_ascii=False)}"
+            
+            print(f"[TimeCapture] Uploading Full Record to Agent: {query}")
+            try:
+                response = self.to_agent.invoke(
+                    query=query,
+                    business_params={"record": record}
+                )
+                print(f"[TimeCapture] Agent Response: {response}")
+            except Exception as e:
+                print(f"[TimeCapture] Error invoking Agent: {e}")
 
     def update_local_json_end_time(self, end_time_str):
         """
         Scans the daily JSONL file for the EARLIEST record that is still 'open' (incomplete).
         Updates it with the end time.
+        Returns a list of the records that were just closed.
         """
         # Calculate today's log path (assuming entry was today)
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -202,7 +213,9 @@ class TimeCapture:
 
         if not os.path.exists(self.json_path):
             print("[TimeCapture] Warning: Today's JSONL file not found.")
-            return
+            return []
+
+        closed_records_list = []
 
         try:
             lines = []
@@ -210,7 +223,7 @@ class TimeCapture:
                 lines = f.readlines()
             
             if not lines:
-                return
+                return []
 
             # Logic: Close ALL open records
             # When the warehouse is empty, EVERYONE must have left.
@@ -234,6 +247,9 @@ class TimeCapture:
                             
                         record['event_type'] = "completed_visit"
                         
+                        # Add to list of records to return
+                        closed_records_list.append(record)
+                        
                         # Write back to lines list
                         lines[i] = json.dumps(record, ensure_ascii=False) + "\n"
                         updated_count += 1
@@ -247,8 +263,11 @@ class TimeCapture:
             else:
                 print("[TimeCapture] No open records found to close.")
                 
+            return closed_records_list
+                
         except Exception as e:
             print(f"[TimeCapture] Error updating local JSON: {e}")
+            return []
 
 if __name__ == "__main__":
     # Test Standalone
