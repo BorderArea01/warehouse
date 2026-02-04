@@ -212,42 +212,38 @@ class TimeCapture:
             if not lines:
                 return
 
-            # FIFO Logic: Find the FIRST record that needs closing
-            # "Needs closing" = event_type == "realtime_identification" (or missing end_time/duration)
-            target_index = -1
-            target_record = None
-
+            # Logic: Close ALL open records
+            # When the warehouse is empty, EVERYONE must have left.
+            # So we iterate through ALL lines and close any that are "realtime_identification".
+            
+            updated_count = 0
+            
             for i, line in enumerate(lines):
                 try:
                     record = json.loads(line)
                     # Check if incomplete
-                    # We check if 'event_type' is NOT 'completed_visit'
                     if record.get('event_type') != 'completed_visit':
-                        target_index = i
-                        target_record = record
-                        break # Found the earliest one, stop searching
+                        # Update this record
+                        record['end_time'] = end_time_str
+                        try:
+                            start_dt = datetime.fromisoformat(record['start_time'])
+                            end_dt = datetime.fromisoformat(end_time_str)
+                            record['duration_seconds'] = (end_dt - start_dt).total_seconds()
+                        except:
+                            record['duration_seconds'] = 0
+                            
+                        record['event_type'] = "completed_visit"
+                        
+                        # Write back to lines list
+                        lines[i] = json.dumps(record, ensure_ascii=False) + "\n"
+                        updated_count += 1
                 except:
                     continue
             
-            if target_index != -1 and target_record:
-                # Update this record
-                target_record['end_time'] = end_time_str
-                try:
-                    start_dt = datetime.fromisoformat(target_record['start_time'])
-                    end_dt = datetime.fromisoformat(end_time_str)
-                    target_record['duration_seconds'] = (end_dt - start_dt).total_seconds()
-                except:
-                    target_record['duration_seconds'] = 0
-                    
-                target_record['event_type'] = "completed_visit"
-                
-                # Write back
-                lines[target_index] = json.dumps(target_record, ensure_ascii=False) + "\n"
-                
+            if updated_count > 0:
                 with open(self.json_path, 'w', encoding='utf-8') as f:
                     f.writelines(lines)
-                    
-                print(f"[TimeCapture] Closed record index {target_index} - Duration: {target_record['duration_seconds']}s")
+                print(f"[TimeCapture] Closed {updated_count} open records. Warehouse is empty.")
             else:
                 print("[TimeCapture] No open records found to close.")
                 
