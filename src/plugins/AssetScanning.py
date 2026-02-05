@@ -7,7 +7,7 @@ import time
 # ================= 配置部分 =================
 # 动态库路径：优先使用当前目录下的库文件
 script_dir = os.path.dirname(os.path.abspath(__file__))
-LIB_PATH = os.path.join(script_dir, 'libModuleAPI.so')
+LIB_PATH = os.path.join(script_dir, 'lib/libModuleAPI.so')
 
 if not os.path.exists(LIB_PATH):
     LIB_PATH = '/usr/local/lib/libModuleAPI.so'

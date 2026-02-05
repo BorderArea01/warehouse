@@ -187,14 +187,46 @@ class TimeCapture:
             start_t = record.get('start_time')
             end_t = record.get('end_time')
             face_res = record.get('face_result', {})
+            yolo_conf = record.get('yolo_confidence', 0.95) # Default to 0.95 if missing (as requested example)
             
-            query = f"记录人员进出流水：开始时间 {start_t}, 结束时间 {end_t}, 人脸识别结果 {json.dumps(face_res, ensure_ascii=False)}"
+            # Format times to "16点30分" style
+            try:
+                s_dt = datetime.fromisoformat(start_t)
+                e_dt = datetime.fromisoformat(end_t)
+                
+                # Format: 16点30分
+                start_str = f"{s_dt.hour}点{s_dt.minute:02d}分"
+                
+                # End time: 17点 (if 00 mins) or 17点05分
+                if e_dt.minute == 0:
+                     end_str = f"{e_dt.hour}点"
+                else:
+                     end_str = f"{e_dt.hour}点{e_dt.minute:02d}分"
+                     
+            except Exception as e:
+                print(f"[TimeCapture] Time formatting error: {e}")
+                start_str = start_t
+                end_str = end_t
+            
+            # Extract Identity Info
+            user_id = "Unknown"
+            nick_name = "Unknown"
+            
+            if isinstance(face_res, dict) and face_res.get("code") == 200:
+                 data = face_res.get("data", {})
+                 user_id = data.get("userId", "Unknown")
+                 nick_name = data.get("nickName", "Unknown")
+        
+            query = (
+                f"记录人员进出流水：开始时间 {start_str}，结束时间 {end_str} ，"
+                f"user_id为：{user_id} ，名称：{nick_name}，"
+                f"置信度{yolo_conf:.2f}，device_id: 1。区域是：小仓库。"
+            )
             
             print(f"[TimeCapture] Uploading Full Record to Agent: {query}")
             try:
                 response = self.to_agent.invoke(
-                    query=query,
-                    business_params={"record": record}
+                    query=query
                 )
                 print(f"[TimeCapture] Agent Response: {response}")
             except Exception as e:

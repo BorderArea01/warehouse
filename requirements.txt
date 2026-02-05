@@ -1,0 +1,11 @@
+opencv-python
+requests
+torch
+pillow
+numpy
+ultralytics
+pandas
+tqdm
+seaborn
+gitpython
+urllib3>=2.6.0
