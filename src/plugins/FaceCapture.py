@@ -310,13 +310,10 @@ class FaceCapture:
         # Send Data
         record = {
             "start_time": bj_time.isoformat(),
-            # For real-time identification, we don't have end_time yet.
-            # We set it to None or omit it. The upload_to_agent will handle it.
             "face_result": face_result,
             "person_name": nick_name,
             "event_type": "realtime_identification"
         }
-        # self.upload_to_agent(record) # REMOVED: Only upload when full record is available (in TimeCapture)
         self.save_local_json(record)
         
         # Check Max Count
@@ -442,8 +439,6 @@ class FaceCapture:
         # Save locally as backup
         self.save_local_json(complete_record)
         
-        # Send to Agent/Server
-        self.upload_to_agent(complete_record)
 
     def save_local_json(self, record):
         try:
@@ -462,27 +457,6 @@ class FaceCapture:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
             print(f"Error saving local JSON: {e}")
-
-    def upload_to_agent(self, record):
-        if not self.to_agent:
-            print("Agent not initialized, skipping upload.")
-            return
-
-        # Construct a natural language query for the agent to process
-        start_t = record.get('start_time', 'Unknown')
-        end_t = record.get('end_time', '进行中') # Default to 'In Progress' if not present
-        
-        query = f"记录人员进出流水：开始时间 {start_t}, 结束时间 {end_t}, 人脸识别结果 {json.dumps(record.get('face_result', {}), ensure_ascii=False)}"
-        
-        print(f"[FaceCapture] Invoking Agent with query: {query}")
-        try:
-            response = self.to_agent.invoke(
-                query=query,
-                business_params={"record": record}
-            )
-            print(f"[FaceCapture] Agent Response: {response}")
-        except Exception as e:
-            print(f"[FaceCapture] Error invoking Agent: {e}")
 
 # Simple test if run directly
 if __name__ == "__main__":
