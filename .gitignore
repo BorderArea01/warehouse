@@ -2,3 +2,4 @@ images
 logs
 __pycache__
 yolov5n.pt
+venv
