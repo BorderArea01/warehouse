@@ -28,13 +28,15 @@
 ## 其他环境配置说明
 硬件：树莓派pi5，海康摄像头（仓库摄像头），RFID射频（串口），摄像头模块（串口）
 仓库摄像头视频流：rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/Channels/101
-服务器人脸识别接口：http://192.168.11.24:8088/system/visitorRecord/recognizeFace
-人脸识别测试脚本：scripts\test_face_recognition.py
+服务器人脸识别接口：http://scenemana.lzwcai.com/api/system/visitorRecord/recognizeFace
 服务器Agent接口：（发送信息给Agent可以由Agent完成数据库写入）
-        employee_id: str = "2007687214648188929",
-        user_id: str = "235",
-        base_url: str = "http://192.168.2.236:8088/system/employee/webhook/invoke",
-        token: str = "eyJhbGciOiJIUzUxMiJ9.eyJsb2dpbl91c2VyX2tleSI6IjRkNDU4YzFhLTMxMmUtNDNkMy04NmIyLWY5OWViNDk3MmRlOCJ9.IV9adDQM4tdrOuDGkI6VtmDtwb1-73eOPJo0p-RoxOX3oUQM4ISA6OO087KA8yy1n_D-PhGEHeIXNmqNB_BXIg",
+    def __init__(
+        self,
+        employee_id: str = "2019323642451259394",
+        user_id: str = "1868",
+        base_url: str = "http://scenemana.lzwcai.com/api/system/employee/webhook/invoke",
+    ) -> None:
+        self.base_url = base_url
+        self.employee_id = employee_id
+        self.user_id = user_id
 参考脚本：src\plugins\ToAgent.py
-
-开发机python解释器路径：C:\Users\67135\AppData\Local\Programs\Python\Python310\python.exe 
