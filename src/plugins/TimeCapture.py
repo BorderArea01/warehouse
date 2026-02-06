@@ -58,12 +58,13 @@ class TimeCapture:
     Service for monitoring exit events and updating visit records.
     """
 
-    def __init__(self, asset_scanner=None):
+    def __init__(self, asset_scanner=None, model=None):
         """
         Initialize the TimeCapture service.
         
         Args:
             asset_scanner: Optional instance of AssetScanning plugin for triggering analysis.
+            model: Optional shared YOLOv5 model.
         """
         self.rtsp_url = RTSP_URL
         self.bj_tz = timezone(timedelta(hours=8))
@@ -77,7 +78,7 @@ class TimeCapture:
         
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
-        self.model = None
+        self.model = model
 
     def get_bj_time(self) -> datetime:
         """Get current time in Beijing Timezone."""
@@ -85,6 +86,9 @@ class TimeCapture:
 
     def load_model(self):
         """Load YOLOv5n model from Torch Hub."""
+        if self.model is not None:
+            return
+
         logger.info("Loading YOLOv5n model...")
         try:
             self.model = torch.hub.load('ultralytics/yolov5', 'yolov5n', pretrained=True)

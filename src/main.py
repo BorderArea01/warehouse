@@ -41,26 +41,50 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Main")
 
+import torch
+
+# ... (Logging config) ...
+
 class WarehouseSystem:
     def __init__(self):
         self.face_capture: Optional[FaceCapture] = None
         self.time_capture: Optional[TimeCapture] = None
         self.asset_scanning: Optional[AssetScanning] = None
         self._running = False
+        self.shared_model = None
+
+    def load_shared_model(self):
+        """Load YOLOv5 model once for shared use."""
+        logger.info("Loading Shared YOLOv5n Model...")
+        try:
+            # Load model from torch hub
+            self.shared_model = torch.hub.load('ultralytics/yolov5', 'yolov5n', pretrained=True)
+            self.shared_model.classes = [0]  # Filter to 'person' class
+            logger.info("Shared Model Loaded Successfully.")
+        except Exception as e:
+            logger.critical(f"Error loading shared model: {e}")
+            sys.exit(1)
 
     def initialize_services(self):
         """Initialize all plugin instances."""
         logger.info("Initializing Warehouse Services...")
+        
+        # Load model first
+        if self.shared_model is None:
+            self.load_shared_model()
+            
         try:
             # 1. Asset Scanning (RFID)
             self.asset_scanning = AssetScanning()
             
             # 2. Time Capture (Exit Camera)
             # Inject AssetScanning to trigger analysis on exit
-            self.time_capture = TimeCapture(asset_scanner=self.asset_scanning)
+            # Inject Shared Model
+            self.time_capture = TimeCapture(asset_scanner=self.asset_scanning, model=self.shared_model)
             
             # 3. Face Capture (Entry Camera)
-            self.face_capture = FaceCapture()
+            # Inject Shared Model
+            self.face_capture = FaceCapture(model=self.shared_model)
             
             logger.info("All services initialized successfully.")
         except Exception as e:

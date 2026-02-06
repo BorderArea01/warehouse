@@ -54,7 +54,7 @@ MIN_DETECTION_DURATION = 0.25  # Seconds
 MIN_FACE_AREA_RATIO = 0.08     # 8% of frame
 MAX_REPORT_COUNT = 2           # Max reports per session
 COOLDOWN_DURATION = 60.0       # Seconds
-REPORT_INTERVAL = 0.3          # Seconds
+REPORT_INTERVAL = 0.5          # Seconds
 
 # ================= Face Capture Service =================
 
@@ -63,7 +63,7 @@ class FaceCapture:
     Service for detecting and recognizing faces from the camera feed.
     """
 
-    def __init__(self):
+    def __init__(self, model=None):
         self.face_api_url = FACE_API_URL
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent() if ToAgent else None
@@ -81,7 +81,7 @@ class FaceCapture:
         
         # Resources
         self.cap = None
-        self.model = None
+        self.model = model
 
     def get_bj_time(self) -> datetime:
         """Get current time in Beijing Timezone."""
@@ -89,6 +89,9 @@ class FaceCapture:
 
     def load_model(self):
         """Load YOLOv5n model from Torch Hub."""
+        if self.model is not None:
+            return
+
         logger.info("Loading YOLOv5n model...")
         try:
             self.model = torch.hub.load('ultralytics/yolov5', 'yolov5n', pretrained=True)
