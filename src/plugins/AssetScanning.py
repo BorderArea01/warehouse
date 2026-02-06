@@ -99,7 +99,7 @@ class RfidReader:
         except OSError as e:
             logger.error(f"Failed to load library: {e}")
             logger.error("Ensure libModuleAPI.so exists and matches system architecture.")
-            sys.exit(1)
+            raise RuntimeError(f"Failed to load RFID library: {e}")
 
     def _setup_functions(self):
         """Define argument and return types for C functions."""

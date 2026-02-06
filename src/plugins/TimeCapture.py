@@ -58,13 +58,14 @@ class TimeCapture:
     Service for monitoring exit events and updating visit records.
     """
 
-    def __init__(self, asset_scanner=None, model=None):
+    def __init__(self, asset_scanner=None, model=None, model_lock=None):
         """
         Initialize the TimeCapture service.
         
         Args:
             asset_scanner: Optional instance of AssetScanning plugin for triggering analysis.
             model: Optional shared YOLOv5 model.
+            model_lock: Optional threading.Lock for thread-safe inference.
         """
         self.rtsp_url = RTSP_URL
         self.bj_tz = timezone(timedelta(hours=8))
@@ -79,6 +80,7 @@ class TimeCapture:
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
         self.model = model
+        self.model_lock = model_lock
 
     def get_bj_time(self) -> datetime:
         """Get current time in Beijing Timezone."""
@@ -148,7 +150,11 @@ class TimeCapture:
                 continue
 
             # Inference
-            results = self.model(frame)
+            if self.model_lock:
+                with self.model_lock:
+                    results = self.model(frame)
+            else:
+                results = self.model(frame)
             detections = results.xyxy[0].cpu().numpy()
             
             # Check for person

@@ -63,7 +63,7 @@ class FaceCapture:
     Service for detecting and recognizing faces from the camera feed.
     """
 
-    def __init__(self, model=None):
+    def __init__(self, model=None, model_lock=None):
         self.face_api_url = FACE_API_URL
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent() if ToAgent else None
@@ -82,6 +82,7 @@ class FaceCapture:
         # Resources
         self.cap = None
         self.model = model
+        self.model_lock = model_lock
 
     def get_bj_time(self) -> datetime:
         """Get current time in Beijing Timezone."""
@@ -163,7 +164,12 @@ class FaceCapture:
                 self._cleanup_cooldowns(current_time)
 
                 # Run Inference
-                results = self.model(frame)
+                if self.model_lock:
+                    with self.model_lock:
+                        results = self.model(frame)
+                else:
+                    results = self.model(frame)
+                    
                 detections = results.xyxy[0].cpu().numpy()
                 
                 valid_detections = []
