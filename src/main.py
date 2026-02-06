@@ -11,7 +11,6 @@ This script initializes and coordinates the following services:
 import sys
 import os
 import time
-import logging
 import signal
 from typing import Optional
 
@@ -30,16 +29,8 @@ except ImportError as e:
     print(f"Critical Error: Failed to import plugins: {e}")
     sys.exit(1)
 
-# Configure Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        # Optional: Add FileHandler here
-    ]
-)
-logger = logging.getLogger("Main")
+from src.log import get_logger
+logger = get_logger("Main")
 
 import torch
 
