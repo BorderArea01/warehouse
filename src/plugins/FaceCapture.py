@@ -223,10 +223,9 @@ class FaceCapture:
                     else:
                         # Tracking Phase
                         if current_time - last_scene_recognition_time >= REPORT_INTERVAL:
-                            if session_report_count < MAX_REPORT_COUNT:
-                                self.process_frame_for_identities(frame, current_time, detections=valid_detections)
-                                last_scene_recognition_time = current_time
-                                session_report_count += 1
+                            self.process_frame_for_identities(frame, current_time, detections=valid_detections)
+                            last_scene_recognition_time = current_time
+                            session_report_count += 1
                 else:
                     # No person detected
                     if is_potential_entry:
