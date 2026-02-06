@@ -19,21 +19,19 @@ import sys
 import torch
 import concurrent.futures
 import threading
-import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 
 # Suppress FutureWarning from torch/numpy
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# Configure logger
-logger = logging.getLogger("FaceCapture")
-
-# Ensure project root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.append(project_root)
+
+from src.log import get_logger
+logger = get_logger("FaceCapture")
 
 # Try importing ToAgent
 try:
@@ -460,6 +458,5 @@ class FaceCapture:
             logger.error(f"Error saving local JSON: {e}")
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     plugin = FaceCapture()
     plugin.start_monitoring()
