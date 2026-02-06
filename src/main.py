@@ -13,6 +13,7 @@ import os
 import time
 import logging
 import signal
+import threading
 from typing import Optional
 
 # Ensure project root is in sys.path
@@ -52,6 +53,7 @@ class WarehouseSystem:
         self.asset_scanning: Optional[AssetScanning] = None
         self._running = False
         self.shared_model = None
+        self.model_lock = threading.Lock()
 
     def load_shared_model(self):
         """Load YOLOv5 model once for shared use."""
@@ -75,16 +77,27 @@ class WarehouseSystem:
             
         try:
             # 1. Asset Scanning (RFID)
-            self.asset_scanning = AssetScanning()
+            try:
+                self.asset_scanning = AssetScanning()
+            except Exception as e:
+                logger.error(f"AssetScanning initialization failed: {e}. Skipping asset tracking.")
+                self.asset_scanning = None
             
             # 2. Time Capture (Exit Camera)
             # Inject AssetScanning to trigger analysis on exit
-            # Inject Shared Model
-            self.time_capture = TimeCapture(asset_scanner=self.asset_scanning, model=self.shared_model)
+            # Inject Shared Model and Lock
+            self.time_capture = TimeCapture(
+                asset_scanner=self.asset_scanning, 
+                model=self.shared_model,
+                model_lock=self.model_lock
+            )
             
             # 3. Face Capture (Entry Camera)
-            # Inject Shared Model
-            self.face_capture = FaceCapture(model=self.shared_model)
+            # Inject Shared Model and Lock
+            self.face_capture = FaceCapture(
+                model=self.shared_model,
+                model_lock=self.model_lock
+            )
             
             logger.info("All services initialized successfully.")
         except Exception as e:
@@ -93,7 +106,7 @@ class WarehouseSystem:
 
     def start(self):
         """Start all background and foreground services."""
-        if not self.face_capture or not self.time_capture or not self.asset_scanning:
+        if not self.face_capture or not self.time_capture:
             self.initialize_services()
 
         self._running = True
@@ -113,8 +126,11 @@ class WarehouseSystem:
             # 1. Start Background Services
             logger.info("Starting Background Services...")
             
-            logger.info("[1/2] Launching AssetScanning...")
-            self.asset_scanning.start_monitoring()
+            if self.asset_scanning:
+                logger.info("[1/2] Launching AssetScanning...")
+                self.asset_scanning.start_monitoring()
+            else:
+                logger.info("[1/2] AssetScanning skipped (not initialized).")
             
             logger.info("[2/2] Launching TimeCapture...")
             self.time_capture.start_monitoring()
