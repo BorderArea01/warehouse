@@ -13,16 +13,18 @@ import sys
 import time
 import json
 import threading
+import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any, Set
 
+# Configure logger for this module
+logger = logging.getLogger("AssetScanning")
+
+# Ensure project root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.append(project_root)
-
-from src.log import get_logger
-logger = get_logger("AssetScanning")
 
 # Try importing ToAgent
 try:
@@ -332,6 +334,9 @@ class AssetScanning:
             logger.error(f"Failed to send report to Agent: {e}")
 
 if __name__ == "__main__":
+    # Setup simple logging for standalone execution
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
     scanner = AssetScanning()
     scanner.start_monitoring()
     try:

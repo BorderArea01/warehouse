@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Time Capture Plugin for Warehouse Monitoring System.
+Time Capture Plugin for Warehouse Monitoring System (MediaPipe Version).
 
 This module:
 1. Monitors the warehouse exit camera (RTSP stream).
-2. Detects when the warehouse becomes empty (exit event).
+2. Detects when the warehouse becomes empty (exit event) using MediaPipe.
 3. Updates visit records with end times.
 4. Triggers asset analysis via the AssetScanning plugin.
 5. Reports complete visit events to the central agent.
@@ -16,21 +16,23 @@ import os
 import sys
 import threading
 import json
-import torch
-import warnings
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 
-# Suppress PyTorch warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
+# MediaPipe Imports
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
+# Configure logger
+logger = logging.getLogger("TimeCapture")
+
+# Ensure project root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.append(project_root)
-
-from src.log import get_logger
-logger = get_logger("TimeCapture")
 
 # Try importing ToAgent
 try:
@@ -46,7 +48,7 @@ except ImportError:
 # ================= Configuration Constants =================
 
 RTSP_URL = "rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/Channels/101"
-CONFIDENCE_THRESHOLD = 0.5
+CONFIDENCE_THRESHOLD = 0.6  # Increased to reduce false positives
 PERSON_TIMEOUT = 5.0  # Seconds of no person seen to consider "Left"
 
 # ================= Time Capture Service =================
@@ -56,19 +58,12 @@ class TimeCapture:
     Service for monitoring exit events and updating visit records.
     """
 
-    def __init__(self, asset_scanner=None, model=None, model_lock=None):
-        """
-        Initialize the TimeCapture service.
-        
-        Args:
-            asset_scanner: Optional instance of AssetScanning plugin for triggering analysis.
-            model: Optional shared YOLOv5 model.
-            model_lock: Optional threading.Lock for thread-safe inference.
-        """
+    def __init__(self, asset_scanner=None, model_path=None):
         self.rtsp_url = RTSP_URL
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent() if ToAgent else None
         self.asset_scanner = asset_scanner
+        self.model_path = model_path
         
         self.json_path = os.path.join(project_root, 'visit_records.jsonl')
         
@@ -77,24 +72,31 @@ class TimeCapture:
         
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
-        self.model = model
-        self.model_lock = model_lock
+        self.detector = None
 
     def get_bj_time(self) -> datetime:
         """Get current time in Beijing Timezone."""
         return datetime.now(self.bj_tz)
 
-    def load_model(self):
-        """Load YOLOv5n model from Torch Hub."""
-        if self.model is not None:
+    def _init_detector(self):
+        """Initialize MediaPipe Object Detector."""
+        if self.detector:
             return
 
-        logger.info("Loading YOLOv5n model...")
+        logger.info(f"Loading MediaPipe model from {self.model_path}...")
         try:
-            self.model = torch.hub.load('ultralytics/yolov5', 'yolov5n', pretrained=True)
-            self.model.classes = [0]  # Filter to 'person' class
+            base_options = python.BaseOptions(model_asset_path=self.model_path)
+            options = vision.ObjectDetectorOptions(
+                base_options=base_options,
+                score_threshold=self.confidence_threshold,
+                max_results=5,
+                category_allowlist=["person"]
+            )
+            self.detector = vision.ObjectDetector.create_from_options(options)
+            logger.info("MediaPipe Object Detector loaded successfully.")
         except Exception as e:
-            logger.error(f"Error loading model: {e}")
+            logger.critical(f"Failed to load MediaPipe model: {e}")
+            sys.exit(1)
 
     def start_monitoring(self):
         """Start the background monitoring thread."""
@@ -102,8 +104,7 @@ class TimeCapture:
             logger.warning("Monitoring already running.")
             return
 
-        if self.model is None:
-            self.load_model()
+        self._init_detector()
 
         self.running = True
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
@@ -147,21 +148,23 @@ class TimeCapture:
             if frame_count % skip_frames != 0:
                 continue
 
-            # Inference
-            if self.model_lock:
-                with self.model_lock:
-                    results = self.model(frame)
-            else:
-                results = self.model(frame)
-            detections = results.xyxy[0].cpu().numpy()
-            
-            # Check for person
-            seen_now = False
-            for *xyxy, conf, cls in detections:
-                if conf >= self.confidence_threshold and int(cls) == 0:
-                    seen_now = True
-                    break
-            
+            # MediaPipe Inference
+            try:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+                
+                detection_result = self.detector.detect(mp_image)
+                
+                # Check for person
+                seen_now = False
+                for detection in detection_result.detections:
+                    if detection.categories[0].score >= self.confidence_threshold:
+                        seen_now = True
+                        break
+            except Exception as e:
+                logger.error(f"Inference Error: {e}")
+                seen_now = False
+
             current_time = time.time()
             
             if seen_now:
@@ -235,7 +238,7 @@ class TimeCapture:
         start_t = record.get('start_time')
         end_t = record.get('end_time')
         face_res = record.get('face_result', {})
-        yolo_conf = record.get('yolo_confidence', 0.95)
+        conf = record.get('confidence', 0.95)
         
         # Format times
         try:
@@ -265,7 +268,7 @@ class TimeCapture:
         query = (
             f"记录人员进出流水：开始时间 {start_str}，结束时间 {end_str} ，"
             f"user_id为：{user_id} ，名称：{nick_name}，"
-            f"置信度{yolo_conf:.2f}，device_id: 1。区域是：小仓库。"
+            f"置信度{conf:.2f}，device_id: 1。区域是：小仓库。"
         )
         
         logger.info(f"Uploading Full Record to Agent: {query}")
@@ -333,10 +336,5 @@ class TimeCapture:
             return []
 
 if __name__ == "__main__":
-    tc = TimeCapture()
-    try:
-        tc.start_monitoring()
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        tc.stop_monitoring()
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    print("Run via main.py to ensure model path is provided.")

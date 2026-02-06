@@ -1,37 +1,40 @@
 # -*- coding: utf-8 -*-
 """
-Face Capture Plugin for Warehouse Monitoring System.
+Face Capture Plugin for Warehouse Monitoring System (MediaPipe Version).
 
 This module handles:
-1. Real-time face detection using YOLOv5n.
+1. Real-time person detection using MediaPipe ObjectDetector (EfficientDet).
 2. Identity recognition via external API.
 3. Reporting entry events to the central agent.
-4. Managing session cooldowns to prevent spamming.
+4. Managing session cooldowns.
 """
 
-import warnings
+import time
 import cv2
 import numpy as np
 import requests
 import json
 import os
 import sys
-import torch
 import concurrent.futures
 import threading
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 
-# Suppress FutureWarning from torch/numpy
-warnings.filterwarnings("ignore", category=FutureWarning)
+# MediaPipe Imports
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
+# Configure logger
+logger = logging.getLogger("FaceCapture")
+
+# Ensure project root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.append(project_root)
-
-from src.log import get_logger
-logger = get_logger("FaceCapture")
 
 # Try importing ToAgent
 try:
@@ -47,60 +50,63 @@ except ImportError:
 # ================= Configuration Constants =================
 
 FACE_API_URL = "http://192.168.11.24:8088/system/visitorRecord/recognizeFace"
-CONFIDENCE_THRESHOLD = 0.6
-MIN_DETECTION_DURATION = 0.25  # Seconds
+CONFIDENCE_THRESHOLD = 0.65  # Increased from 0.5 to reduce false positives
+MIN_DETECTION_DURATION = 0.6   # Increased from 0.25s to 0.6s to prevent glitch triggers
 MIN_FACE_AREA_RATIO = 0.08     # 8% of frame
-MAX_REPORT_COUNT = 2           # Max reports per session
-COOLDOWN_DURATION = 60.0       # Seconds
 REPORT_INTERVAL = 0.5          # Seconds
 
 # ================= Face Capture Service =================
 
 class FaceCapture:
     """
-    Service for detecting and recognizing faces from the camera feed.
+    Service for detecting persons and recognizing faces.
     """
 
-    def __init__(self, model=None, model_lock=None):
+    def __init__(self, model_path: str):
         self.face_api_url = FACE_API_URL
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent() if ToAgent else None
+        self.model_path = model_path
         
         # Configuration
         self.headless = os.environ.get('HEADLESS', 'False').lower() == 'true'
         
         # State Management
-        self.identified_cooldowns: Dict[str, float] = {}  # {user_id: expiry_timestamp}
-        self.person_states: Dict[str, Dict] = {}          # {user_id: {'count': 0, 'cooldown_until': 0}}
+        self.identified_cooldowns: Dict[str, float] = {}
+        self.person_states: Dict[str, Dict] = {}
         self.state_lock = threading.Lock()
         
-        # Thread Pool for async API calls
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        # Thread Pool
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
         
         # Resources
         self.cap = None
-        self.model = model
-        self.model_lock = model_lock
+        self.detector = None
 
     def get_bj_time(self) -> datetime:
-        """Get current time in Beijing Timezone."""
         return datetime.now(self.bj_tz)
 
-    def load_model(self):
-        """Load YOLOv5n model from Torch Hub."""
-        if self.model is not None:
+    def _init_detector(self):
+        """Initialize MediaPipe Object Detector."""
+        if self.detector:
             return
 
-        logger.info("Loading YOLOv5n model...")
+        logger.info(f"Loading MediaPipe model from {self.model_path}...")
         try:
-            self.model = torch.hub.load('ultralytics/yolov5', 'yolov5n', pretrained=True)
-            self.model.classes = [0]  # Filter to 'person' class
+            base_options = python.BaseOptions(model_asset_path=self.model_path)
+            options = vision.ObjectDetectorOptions(
+                base_options=base_options,
+                score_threshold=CONFIDENCE_THRESHOLD,
+                max_results=5,
+                category_allowlist=["person"]
+            )
+            self.detector = vision.ObjectDetector.create_from_options(options)
+            logger.info("MediaPipe Object Detector loaded successfully.")
         except Exception as e:
-            logger.critical(f"Error loading model: {e}")
+            logger.critical(f"Failed to load MediaPipe model: {e}")
             sys.exit(1)
 
     def _initialize_camera(self):
-        """Initialize the video capture device."""
         self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
             logger.error("Could not open camera 0.")
@@ -109,18 +115,15 @@ class FaceCapture:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         
-        # Headless detection logic
         if not self.headless:
             if not os.environ.get('DISPLAY'):
-                logger.warning("No DISPLAY detected. Switching to HEADLESS mode.")
                 self.headless = True
             else:
                 try:
-                    # Test display capability
+                    # Test display
                     cv2.imshow("Test", np.zeros((10, 10, 3), dtype=np.uint8))
                     cv2.destroyWindow("Test")
-                except Exception as e:
-                    logger.warning(f"Display not available ({e}). Switching to HEADLESS mode.")
+                except Exception:
                     self.headless = True
         return True
 
@@ -131,18 +134,15 @@ class FaceCapture:
         if not self._initialize_camera():
             return
 
-        if self.model is None:
-            self.load_model()
-            
-        logger.info("Camera and Model Ready. Monitoring started.")
+        self._init_detector()
 
-        # Local state for the loop
+        # Loop State
         is_tracking = False
         session_report_count = 0
         session_start_time = None
         last_seen_time = 0.0
         
-        # Debounce state
+        # Debounce
         potential_start_time = 0.0
         is_potential_entry = False
         tracking_timeout = 5.0
@@ -152,44 +152,54 @@ class FaceCapture:
             while True:
                 ret, frame = self.cap.read()
                 if not ret:
-                    logger.warning("Failed to grab frame. Retrying...")
                     time.sleep(0.1)
                     continue
 
-                current_time = datetime.now().timestamp()
-                
-                # Cleanup expired cooldowns
+                current_time = time.time()
                 self._cleanup_cooldowns(current_time)
 
-                # Run Inference
-                if self.model_lock:
-                    with self.model_lock:
-                        results = self.model(frame)
-                else:
-                    results = self.model(frame)
-                    
-                detections = results.xyxy[0].cpu().numpy()
+                # MediaPipe Inference
+                # Convert to RGB
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+                
+                # Detect
+                detection_result = self.detector.detect(mp_image)
+                detections = detection_result.detections
                 
                 valid_detections = []
                 frame_area = float(frame.shape[0] * frame.shape[1])
                 person_detected_now = False
 
-                for *xyxy, conf, cls in detections:
-                    if conf >= CONFIDENCE_THRESHOLD and int(cls) == 0:
-                        x1, y1, x2, y2 = map(int, xyxy)
-                        
-                        # Filter small objects
-                        box_area = (x2 - x1) * (y2 - y1)
-                        if box_area / frame_area < MIN_FACE_AREA_RATIO:
-                            if not self.headless:
-                                cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
-                            continue
+                for detection in detections:
+                    # Assuming category_allowlist="person" worked, all are persons.
+                    # Bounding box is in pixels: origin_x, origin_y, width, height
+                    bbox = detection.bounding_box
+                    x1 = int(bbox.origin_x)
+                    y1 = int(bbox.origin_y)
+                    w_box = int(bbox.width)
+                    h_box = int(bbox.height)
+                    x2 = x1 + w_box
+                    y2 = y1 + h_box
+                    
+                    score = detection.categories[0].score
 
-                        person_detected_now = True
-                        valid_detections.append((x1, y1, x2, y2, float(conf)))
-                        
+                    # Filter small objects
+                    box_area = w_box * h_box
+                    if box_area / frame_area < MIN_FACE_AREA_RATIO:
+                        # logger.debug(f"Ignored small object: score={score:.2f}, ratio={box_area/frame_area:.3f}")
                         if not self.headless:
-                            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
+                        continue
+
+                    logger.info(f"Detected Person: score={score:.2f}, area_ratio={box_area/frame_area:.3f}")
+                    person_detected_now = True
+                    valid_detections.append((x1, y1, x2, y2, float(score)))
+                    
+                    if not self.headless:
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(frame, f"Person {score:.2f}", (x1, y1 - 10), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
                 # --- State Machine Logic ---
                 if person_detected_now:
@@ -208,7 +218,6 @@ class FaceCapture:
                                 is_potential_entry = False
                                 session_start_time = self.get_bj_time()
                                 
-                                # Immediate recognition
                                 self.process_frame_for_identities(frame, current_time, detections=valid_detections)
                                 session_report_count += 1
                     else:
@@ -243,13 +252,11 @@ class FaceCapture:
             cv2.destroyAllWindows()
 
     def _cleanup_cooldowns(self, current_time: float):
-        """Remove expired entries from identified_cooldowns."""
         expired = [uid for uid, ts in self.identified_cooldowns.items() if current_time > ts]
         for uid in expired:
             del self.identified_cooldowns[uid]
 
     def _draw_debug_info(self, frame, current_time: float):
-        """Draw debug overlays on the frame."""
         y_off = 30
         for uid, ts in self.identified_cooldowns.items():
             rem = int(ts - current_time)
@@ -259,9 +266,7 @@ class FaceCapture:
 
     def process_frame_for_identities(self, frame: np.ndarray, current_time: float, 
                                    detections: List[Tuple] = None):
-        """
-        Process detected persons in the frame: crop, encode, and recognize.
-        """
+        """Process detected persons: crop and recognize."""
         bj_time = self.get_bj_time()
         targets_to_process = []
         
@@ -271,7 +276,7 @@ class FaceCapture:
                 x1, y1, x2, y2 = det[:4]
                 conf = det[4]
                 
-                # Add 10% padding
+                # Padding
                 pad_x = int((x2 - x1) * 0.1)
                 pad_y = int((y2 - y1) * 0.1)
                 crop_x1 = max(0, x1 - pad_x)
@@ -283,7 +288,6 @@ class FaceCapture:
                 if crop_img.size > 0:
                     targets_to_process.append((crop_img.copy(), conf))
         else:
-            # Fallback: full frame
             targets_to_process.append((frame.copy(), 0.0))
 
         logger.debug(f"Async processing {len(targets_to_process)} target(s)...")
@@ -294,14 +298,12 @@ class FaceCapture:
             )
 
     def _async_recognize_task(self, img_to_send, current_time, bj_time, img_idx, conf):
-        """Worker task for face recognition."""
         try:
-            # 1. API Call
+            # API Call
             result = self.capture_and_recognize(img_to_send, bj_time, suffix=f"_{img_idx}")
             if not result:
                 return
 
-            # 2. Extract Data
             user_id = "unknown"
             nick_name = "Unknown"
             user_type = "Unknown"
@@ -312,20 +314,19 @@ class FaceCapture:
                     user_id = str(data.get("userId", "unknown"))
                     nick_name = data.get("nickName", "Unknown")
                     user_type = data.get("userType", "Unknown")
+            else:
+                logger.warning(f"API returned non-200 or invalid format: {result}")
 
-            # 3. Filter Invalid Users
             if self._should_ignore_user(user_id, nick_name, user_type):
+                logger.warning(f"Ignored user from API: id={user_id}, name={nick_name}, type={user_type}")
                 return
 
-            # 4. Check Cooldown
             with self.state_lock:
                 in_cooldown = user_id in self.identified_cooldowns
             
             if in_cooldown:
-                logger.debug(f"User {nick_name} is in cooldown.")
                 return 
 
-            # 5. Process Valid Report
             logger.info(f"Recognized: {nick_name} ({user_id})")
             with self.state_lock:
                 self._update_person_state(user_id, nick_name, current_time, result, bj_time, conf)
@@ -334,86 +335,131 @@ class FaceCapture:
             logger.error(f"Async Task Error: {e}")
 
     def _should_ignore_user(self, user_id: str, nick_name: str, user_type: str) -> bool:
-        """Determine if the recognized user should be ignored."""
         if "游客" in user_type or "visitor" in user_type.lower():
             logger.info(f"Ignored Visitor: {nick_name}")
             return True
             
         if not user_id or user_id.lower() in ["unknown", "none", ""] or not nick_name:
-            logger.debug(f"Ignored Unknown User (ID: {user_id})")
             return True
             
         return False
 
     def _update_person_state(self, user_id, nick_name, current_time, face_result, bj_time, conf):
-        """Update report counters and trigger logging/sending."""
-        state = self.person_states.get(user_id, {'count': 0, 'cooldown_until': 0.0})
+        # Determine cooldown based on user type/name
+        # If "visitor" or "游客" in name/type, use 1s, else 5s
+        is_visitor = "游客" in nick_name or "visitor" in nick_name.lower()
+        # Also check user_type from face_result if available
+        if not is_visitor and isinstance(face_result, dict):
+            u_type = face_result.get("data", {}).get("userType", "")
+            if "游客" in u_type or "visitor" in u_type.lower():
+                is_visitor = True
+        
+        cooldown_duration = 1.0 if is_visitor else 5.0
+        
+        state = self.person_states.get(user_id, {'cooldown_until': 0.0})
         
         if current_time < state['cooldown_until']:
             return
 
-        state['count'] += 1
-        logger.info(f"Reporting {nick_name} ({state['count']}/{MAX_REPORT_COUNT})")
+        # Check if user is already "in" (open record exists)
+        if self._is_user_already_in(user_id):
+            logger.info(f"User {nick_name} is already in warehouse (Open Record). Skipping new entry log.")
+            # Still apply cooldown so we don't spam checks
+            state['cooldown_until'] = current_time + cooldown_duration
+            self.identified_cooldowns[user_id] = state['cooldown_until']
+            self.person_states[user_id] = state
+            return
+
+        logger.info(f"Reporting Entry: {nick_name} (Cooldown: {cooldown_duration}s)")
         
         record = {
             "start_time": bj_time.isoformat(),
             "face_result": face_result,
             "person_name": nick_name,
             "event_type": "realtime_identification",
-            "yolo_confidence": float(conf)
+            "confidence": float(conf),
+            "user_id": user_id  # Store for easier lookup
         }
         
-        # Only log/send on first detection of the session
-        if state['count'] == 1:
-            self.save_local_json(record)
-            self.send_to_agent(record)
+        # Save and Send
+        self.save_local_json(record)
+        self.send_to_agent(record)
         
-        # Check if max reports reached -> Enter Cooldown
-        if state['count'] >= MAX_REPORT_COUNT:
-            logger.info(f"{nick_name} reached max reports. Cooldown for {COOLDOWN_DURATION}s.")
-            state['cooldown_until'] = current_time + COOLDOWN_DURATION
-            state['count'] = 0
-            
-            # Also update global cooldown map for quick lookup
-            self.identified_cooldowns[user_id] = state['cooldown_until']
-            
+        # Apply Cooldown
+        state['cooldown_until'] = current_time + cooldown_duration
+        self.identified_cooldowns[user_id] = state['cooldown_until']
         self.person_states[user_id] = state
 
+    def _is_user_already_in(self, user_id: str) -> bool:
+        """
+        Check local JSONL to see if this user has an open record (no end_time).
+        """
+        try:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            log_dir = os.path.join(project_root, 'logs', 'person')
+            file_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
+            
+            if not os.path.exists(file_path):
+                return False
+                
+            # Read file backwards or just read all (assuming not huge for one day)
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                
+            for line in reversed(lines):
+                try:
+                    rec = json.loads(line)
+                    # Check if it matches user
+                    rec_uid = rec.get("user_id")
+                    if not rec_uid:
+                         # Fallback: extract from face_result if needed, but we saved user_id in new records
+                         # For backward compatibility with older records today:
+                         face_res = rec.get("face_result", {})
+                         if isinstance(face_res, dict) and face_res.get("code") == 200:
+                             rec_uid = str(face_res.get("data", {}).get("userId", ""))
+                    
+                    if str(rec_uid) == str(user_id):
+                        # Found the latest record for this user
+                        # Check if it is closed
+                        if rec.get("event_type") == "completed_visit" or rec.get("end_time"):
+                            return False # Last record is closed, so they are "out" (or re-entering)
+                        else:
+                            return True # Last record is open, so they are "in"
+                except json.JSONDecodeError:
+                    continue
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking open records: {e}")
+            return False
+
     def capture_and_recognize(self, frame, timestamp: datetime, suffix="") -> Optional[Dict[str, Any]]:
-        """Encode image and send to API."""
         try:
             filename = timestamp.strftime(f"%Y%m%d-%H%M%S_face{suffix}.jpg")
             success, encoded_img = cv2.imencode('.jpg', frame)
             
             if not success:
-                logger.error("Failed to encode image.")
                 return None
             
             files = {'file': (filename, encoded_img.tobytes(), 'image/jpeg')}
-            
-            logger.debug(f"Sending face image {filename} to API...")
             response = requests.post(self.face_api_url, files=files, timeout=30)
             
             try:
-                result = response.json()
-                return result
+                return response.json()
             except json.JSONDecodeError:
-                logger.error(f"Invalid JSON response: {response.text}")
                 return {"raw": response.text}
-                
         except Exception as e:
             logger.error(f"API Request Error: {e}")
             return None
 
     def send_to_agent(self, record: Dict[str, Any]):
-        """Send entry event to Agent (without end_time)."""
         if not self.to_agent:
             return
 
         try:
             start_t = record.get('start_time')
             face_res = record.get('face_result', {})
-            yolo_conf = record.get('yolo_confidence', 0.95)
+            conf = record.get('confidence', 0.95)
             
             try:
                 s_dt = datetime.fromisoformat(start_t)
@@ -431,7 +477,7 @@ class FaceCapture:
             query = (
                 f"检测到人员进入：时间 {start_str}，"
                 f"user_id为：{user_id} ，名称：{nick_name}，"
-                f"置信度{yolo_conf:.2f}，device_id: 1。区域是：小仓库入口。"
+                f"置信度{conf:.2f}，device_id: 1。区域是：小仓库入口。"
             )
             
             logger.info(f"Sending Entry Event to Agent: {query}")
@@ -441,22 +487,20 @@ class FaceCapture:
             logger.error(f"Error sending to Agent: {e}")
 
     def save_local_json(self, record: Dict[str, Any]):
-        """Save record to local JSONL file."""
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
             log_dir = os.path.join(project_root, 'logs', 'person')
             os.makedirs(log_dir, exist_ok=True)
-            
             file_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
             
-            # Remove redundant field if exists
             record.pop('person_name', None)
-                
             with open(file_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.error(f"Error saving local JSON: {e}")
 
 if __name__ == "__main__":
-    plugin = FaceCapture()
-    plugin.start_monitoring()
+    # For testing, need to provide model path manually or download it
+    # This is just for module execution
+    logging.basicConfig(level=logging.INFO)
+    print("Run via main.py to ensure model path is provided.")

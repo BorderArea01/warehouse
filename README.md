@@ -4,17 +4,17 @@
 本项目是一个集成了计算机视觉和物联网技术的仓库智能监控系统。它利用 AI 模型进行人员进出管理，结合 RFID 技术进行资产流动追踪，实现对仓库环境的全方位自动化监控。
 
 系统核心包含三大模块：
-1.  **FaceCapture**: 基于 YOLOv5 的实时人脸检测与身份识别（入口）。
+1.  **FaceCapture**: 基于 MediaPipe 的实时人脸检测与身份识别（入口）。
 2.  **AssetScanning**: 基于 RFID 的资产实时盘点与变动追踪。
-3.  **TimeCapture**: 基于 RTSP 视频流的人员离场判定与事件闭环（出口）。
+3.  **TimeCapture**: 基于 MediaPipe 与 RTSP 视频流的人员离场判定与事件闭环（出口）。
 
 ## 核心功能 (Features)
 
 ### 1. 实时人脸检测与抓拍 (FaceCapture)
 *   **实时监控**: 调用本地摄像头（Index 0）进行不间断监控。
-*   **智能识别**: 集成 YOLOv5n 模型检测人员，支持防误触（Debounce）与距离过滤。
+*   **智能识别**: 集成 Google MediaPipe (EfficientDet-Lite0) 模型检测人员，支持防误触（Debounce 0.6s）与距离过滤。
 *   **身份验证**: 对接后端人脸识别接口，确认人员身份。
-*   **流量控制**: 智能冷却机制，避免同一人员重复频繁上报。
+*   **流量控制**: 智能冷却机制，游客冷却 1s，普通人员冷却 5s；支持状态校验，避免重复记录未离场人员。
 *   **实时上报**: 人员进入时立即通知服务器。
 
 ### 2. 资产流动追踪 (AssetScanning)
@@ -30,7 +30,7 @@
 
 ## 环境要求 (Requirements)
 *   Python 3.8+
-*   依赖库：`torch`, `opencv-python`, `ultralytics`, `requests`, `numpy` 等。
+*   依赖库：`mediapipe`, `opencv-python`, `requests`, `numpy` 等。
 *   硬件：
     *   树莓派 Pi 5 或同等性能工控机。
     *   USB/CSI 摄像头（用于人脸抓拍）。
