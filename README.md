@@ -1,65 +1,85 @@
 # Warehouse Monitoring System
 
 ## 简介 (Introduction)
-本项目是一个基于计算机视觉的仓库进出监控系统。利用 YOLOv5 模型实时检测人员进出，通过人脸识别确认身份，并记录精确的进出时间。系统包含入口人脸抓拍（FaceCapture）和出口离场监控（TimeCapture）两个核心模块。
+本项目是一个集成了计算机视觉和物联网技术的仓库智能监控系统。它利用 AI 模型进行人员进出管理，结合 RFID 技术进行资产流动追踪，实现对仓库环境的全方位自动化监控。
 
-## 功能特性 (Features)
-*   **实时人脸检测与抓拍 (FaceCapture)**
-    *   调用本地摄像头（Index 0）进行实时监控。
-    *   集成 YOLOv5n 模型检测人员，支持防误触（Debounce）与距离过滤。
-    *   智能冷却机制：单次进入事件最多上报 3 次，随后进入 60 秒冷却期，避免重复记录。
-    *   对接后端人脸识别接口，上传抓拍照片。
-*   **离场监控 (TimeCapture)**
-    *   通过 RTSP 协议连接海康威视（Hikvision）摄像头。
-    *   后台线程实时分析视频流，监测人员离场状态（基于超时判定）。
-    *   自动记录离开时间并同步至系统。
-*   **数据记录与同步**
-    *   本地 `visit_records.jsonl` JSONL 文件实时备份进出记录。
-    *   通过 `ToAgent` 插件与后端 Agent 联动，将完整的人员流水信息写入数据库。
+系统核心包含三大模块：
+1.  **FaceCapture**: 基于 YOLOv5 的实时人脸检测与身份识别（入口）。
+2.  **AssetScanning**: 基于 RFID 的资产实时盘点与变动追踪。
+3.  **TimeCapture**: 基于 RTSP 视频流的人员离场判定与事件闭环（出口）。
+
+## 核心功能 (Features)
+
+### 1. 实时人脸检测与抓拍 (FaceCapture)
+*   **实时监控**: 调用本地摄像头（Index 0）进行不间断监控。
+*   **智能识别**: 集成 YOLOv5n 模型检测人员，支持防误触（Debounce）与距离过滤。
+*   **身份验证**: 对接后端人脸识别接口，确认人员身份。
+*   **流量控制**: 智能冷却机制，避免同一人员重复频繁上报。
+*   **实时上报**: 人员进入时立即通知服务器。
+
+### 2. 资产流动追踪 (AssetScanning)
+*   **RFID 盘点**: 通过串口连接 RFID 读写器，实时监控在库资产。
+*   **状态追踪**: 自动记录资产上线（入库）和下线（出库/移除）事件。
+*   **变动分析**: 在人员离场后，自动分析该时段内的资产变动情况（带走或放入的物品）。
+*   **数据同步**: 生成资产变动报告并上报服务器。
+
+### 3. 离场监控与事件闭环 (TimeCapture)
+*   **全景监控**: 通过 RTSP 协议连接海康威视（Hikvision）摄像头。
+*   **离场判定**: 后台线程实时分析视频流，当仓库内无人（超时）时判定为离场。
+*   **自动闭环**: 计算停留时长，触发资产变动分析，并将完整记录（人员+时间+资产）上报系统。
 
 ## 环境要求 (Requirements)
 *   Python 3.8+
-*   依赖库：`torch`, `opencv-python`, `ultralytics`, `requests` 等（详见 `requirements.txt`）。
-*   硬件：支持 PyTorch/YOLOv5 推理的设备（如 PC 或高性能边缘计算设备）。
+*   依赖库：`torch`, `opencv-python`, `ultralytics`, `requests`, `numpy` 等。
+*   硬件：
+    *   树莓派 Pi 5 或同等性能工控机。
+    *   USB/CSI 摄像头（用于人脸抓拍）。
+    *   海康威视网络摄像头（用于全景监控）。
+    *   串口 RFID 读写器（支持 moduleAPI）。
 
 ## 快速开始 (Quick Start)
 
 ### 1. 安装依赖
-确保已安装 Python 环境，然后在项目根目录下运行：
 ```bash
 pip install -r requirements.txt
 ```
 
 ### 2. 运行系统
 ```bash
+# 必须在项目根目录下运行
 python src/main.py
 ```
-启动后：
-*   **FaceCapture** 将在主线程运行，并弹出 OpenCV 窗口显示实时监控画面（按 `q` 或 `Ctrl+C` 退出）。
-*   **TimeCapture** 将在后台线程运行，监控 RTSP 流。
+
+### 3. 运行模式
+启动后，系统将自动加载以下服务：
+*   **AssetScanning**: 后台线程，持续盘点 RFID 标签。
+*   **TimeCapture**: 后台线程，监控 RTSP 视频流。
+*   **FaceCapture**: 主线程（前台），显示实时监控窗口（按 `q` 或 `Ctrl+C` 退出）。
 
 ## 目录结构 (Directory Structure)
 ```
 warehouse/
 ├── src/
-│   ├── main.py                 # 主程序入口
-│   ├── plugins/                # 功能插件目录
-│   │   ├── FaceCapture.py      # 入口人脸抓拍模块（含 YOLOv5 检测与 HTTP 上报）
-│   │   ├── TimeCapture.py      # 出口监控模块（含 RTSP 流处理与离场判定）
-│   │   ├── ToAgent.py          # 后端通信模块
-│   │   └── AssetScanning.py    # 资产扫描模块（可选）
-├── requirements.txt            # 项目依赖列表
-├── visit_records.jsonl         # 本地访问记录（运行时自动生成）
-└── yolov5n.pt                  # YOLOv5 预训练模型
+│   ├── main.py                 # 主程序入口，负责服务编排
+│   ├── plugins/                # 功能插件模块
+│   │   ├── FaceCapture.py      # 入口人脸抓拍模块
+│   │   ├── TimeCapture.py      # 出口离场监控模块
+│   │   ├── AssetScanning.py    # RFID 资产追踪模块
+│   │   ├── ToAgent.py          # 后端通信接口
+│   │   ├── VideoBackup.py      # 录像回放下载工具
+│   │   └── lib/                # 第三方动态库 (libModuleAPI.so)
+│   └── utils/                  # 通用工具类
+├── logs/                       # 日志目录
+│   ├── person/                 # 人员进出记录 (JSONL)
+│   └── asset/                  # 资产变动记录 (JSONL)
+├── doc/                        # 项目文档
+│   └── config.md               # 详细配置与逻辑说明
+└── requirements.txt            # 项目依赖
 ```
 
 ## 配置说明 (Configuration)
-目前主要配置项位于各插件类的 `__init__` 方法中，请根据实际部署环境进行修改：
+主要配置项位于各插件源码顶部的常量定义中：
 
-*   **FaceCapture.py**:
-    *   `self.face_api_url`: 后端人脸识别 API 地址。
-    *   `self.confidence_threshold`: 人脸/人员检测置信度阈值。
-
-*   **TimeCapture.py**:
-    *   `self.rtsp_url`: 出口摄像头的 RTSP 视频流地址。
-    *   `self.person_timeout`: 判定人员离场的超时时间（默认 5.0 秒）。
+*   **FaceCapture.py**: API 地址、检测阈值、冷却时间。
+*   **TimeCapture.py**: RTSP 地址、离场超时时间。
+*   **AssetScanning.py**: 串口地址 (`/dev/ttyACM0`)、离场超时判定。

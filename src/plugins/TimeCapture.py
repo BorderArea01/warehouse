@@ -1,3 +1,14 @@
+# -*- coding: utf-8 -*-
+"""
+Time Capture Plugin for Warehouse Monitoring System.
+
+This module:
+1. Monitors the warehouse exit camera (RTSP stream).
+2. Detects when the warehouse becomes empty (exit event).
+3. Updates visit records with end times.
+4. Triggers asset analysis via the AssetScanning plugin.
+5. Reports complete visit events to the central agent.
+"""
 
 import cv2
 import time
@@ -7,17 +18,23 @@ import threading
 import json
 import torch
 import warnings
+import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 # Suppress PyTorch warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# Add project root to sys.path
+# Configure logger
+logger = logging.getLogger("TimeCapture")
+
+# Ensure project root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
-sys.path.append(project_root)
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
+# Try importing ToAgent
 try:
     from src.plugins.ToAgent import ToAgent
 except ImportError:
@@ -25,51 +42,60 @@ except ImportError:
     try:
         from ToAgent import ToAgent
     except ImportError:
-        print("Warning: Could not import ToAgent")
+        logger.warning("Could not import ToAgent. Server reporting will be disabled.")
         ToAgent = None
 
-import fileinput
+# ================= Configuration Constants =================
+
+RTSP_URL = "rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/Channels/101"
+CONFIDENCE_THRESHOLD = 0.5
+PERSON_TIMEOUT = 5.0  # Seconds of no person seen to consider "Left"
+
+# ================= Time Capture Service =================
 
 class TimeCapture:
     """
-    TimeCapture Plugin:
-    - Monitors the Warehouse Camera (Hikvision RTSP) for person exit events.
-    - Runs in a separate thread/async mode.
-    - Updates the database (via Agent) AND the local JSONL file with the end time.
+    Service for monitoring exit events and updating visit records.
     """
-    def __init__(self):
-        # Configuration
-        self.rtsp_url = "rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/Channels/101"
+
+    def __init__(self, asset_scanner=None):
+        """
+        Initialize the TimeCapture service.
+        
+        Args:
+            asset_scanner: Optional instance of AssetScanning plugin for triggering analysis.
+        """
+        self.rtsp_url = RTSP_URL
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent() if ToAgent else None
+        self.asset_scanner = asset_scanner
         
         self.json_path = os.path.join(project_root, 'visit_records.jsonl')
         
-        # Detection Config
-        self.confidence_threshold = 0.5
-        self.person_timeout = 5.0 # Seconds of no person seen to consider "Left"
+        self.confidence_threshold = CONFIDENCE_THRESHOLD
+        self.person_timeout = PERSON_TIMEOUT
         
         self.running = False
-        self.monitor_thread = None
+        self.monitor_thread: Optional[threading.Thread] = None
         self.model = None
 
     def get_bj_time(self) -> datetime:
+        """Get current time in Beijing Timezone."""
         return datetime.now(self.bj_tz)
 
     def load_model(self):
-        print("[TimeCapture] Loading YOLOv5n model...")
+        """Load YOLOv5n model from Torch Hub."""
+        logger.info("Loading YOLOv5n model...")
         try:
             self.model = torch.hub.load('ultralytics/yolov5', 'yolov5n', pretrained=True)
             self.model.classes = [0]  # Filter to 'person' class
         except Exception as e:
-            print(f"[TimeCapture] Error loading model: {e}")
+            logger.error(f"Error loading model: {e}")
 
     def start_monitoring(self):
-        """
-        Starts the background monitoring thread.
-        """
+        """Start the background monitoring thread."""
         if self.running:
-            print("[TimeCapture] Already running.")
+            logger.warning("Monitoring already running.")
             return
 
         if self.model is None:
@@ -78,43 +104,37 @@ class TimeCapture:
         self.running = True
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
-        print("[TimeCapture] Monitoring started in background thread.")
+        logger.info("TimeCapture Monitoring started.")
 
     def stop_monitoring(self):
+        """Stop the monitoring thread."""
         self.running = False
         if self.monitor_thread:
-            self.monitor_thread.join()
-        print("[TimeCapture] Monitoring stopped.")
+            self.monitor_thread.join(timeout=2.0)
+        logger.info("TimeCapture Monitoring stopped.")
 
     def _monitor_loop(self):
-        """
-        Main loop to read RTSP stream and detect person presence.
-        Logic:
-        - If person seen: Update last_seen_time.
-        - If person NOT seen for > timeout: Trigger Exit Event.
-        """
+        """Main loop to read RTSP stream and detect person presence."""
         cap = cv2.VideoCapture(self.rtsp_url)
         if not cap.isOpened():
-            print(f"[TimeCapture] Error: Could not open RTSP stream: {self.rtsp_url}")
+            logger.error(f"Could not open RTSP stream: {self.rtsp_url}")
             self.running = False
             return
 
-        # Optimization: Skip frames to reduce load (process every 5th frame)
+        logger.info("Connected to Camera. Listening for exit events...")
+
+        # Optimization: Skip frames
         frame_count = 0
         skip_frames = 5
         
         # State
-        person_present = False
         last_seen_time = time.time()
-        is_session_active = False # Are we currently tracking a visit?
-        session_start_marker = 0
-
-        print("[TimeCapture] Connected to Camera. Listening for exit events...")
+        is_session_active = False  # Are we currently tracking a visit?
 
         while self.running:
             ret, frame = cap.read()
             if not ret:
-                print("[TimeCapture] Stream disconnected. Reconnecting in 5s...")
+                logger.warning("Stream disconnected. Reconnecting in 5s...")
                 time.sleep(5)
                 cap = cv2.VideoCapture(self.rtsp_url)
                 continue
@@ -141,8 +161,7 @@ class TimeCapture:
                 if not is_session_active:
                     # New person arrived (or re-entered)
                     is_session_active = True
-                    session_start_marker = current_time
-                    print(f"[TimeCapture] Person Detected in Warehouse. Tracking session...")
+                    logger.info("Person Detected in Warehouse. Tracking session...")
             
             else:
                 if is_session_active:
@@ -151,7 +170,7 @@ class TimeCapture:
                     if duration_gone > self.person_timeout:
                         # TIMEOUT REACHED -> EVENT END
                         end_time = self.get_bj_time()
-                        print(f"[TimeCapture] Person Left Warehouse (Timeout {self.person_timeout}s). End Time: {end_time}")
+                        logger.info(f"Person Left Warehouse (Timeout {self.person_timeout}s).")
                         
                         # Trigger Agent to update DB
                         self.report_exit_event(end_time)
@@ -165,102 +184,111 @@ class TimeCapture:
 
     def report_exit_event(self, end_time: datetime):
         """
-        1. Updates local JSONL file with end_time for the last record.
-        2. Calls the Agent to update the DB with the FULL record (start + end).
+        Handle exit event: update local logs, trigger asset analysis, and report to agent.
         """
         end_time_str = end_time.isoformat()
         
         # 1. Update Local File and Get Full Records
-        closed_records = self.update_local_json_end_time(end_time_str)
+        closed_records = self._update_local_json_end_time(end_time_str)
         
-        # 2. Call Agent for each closed record
-        if not self.to_agent:
-            print("[TimeCapture] Agent not available. Cannot report exit.")
-            return
-
         if not closed_records:
-            print("[TimeCapture] No valid records to upload.")
+            logger.info("No open records found to close.")
             return
 
         for record in closed_records:
             # We now send the COMPLETE record
             start_t = record.get('start_time')
             end_t = record.get('end_time')
-            face_res = record.get('face_result', {})
-            yolo_conf = record.get('yolo_confidence', 0.95) # Default to 0.95 if missing (as requested example)
             
-            # Format times to "16点30分" style
-            try:
-                s_dt = datetime.fromisoformat(start_t)
-                e_dt = datetime.fromisoformat(end_t)
-                
-                # Format: 16点30分
-                start_str = f"{s_dt.hour}点{s_dt.minute:02d}分"
-                
-                # End time: 17点 (if 00 mins) or 17点05分
-                if e_dt.minute == 0:
-                     end_str = f"{e_dt.hour}点"
-                else:
-                     end_str = f"{e_dt.hour}点{e_dt.minute:02d}分"
-                     
-            except Exception as e:
-                print(f"[TimeCapture] Time formatting error: {e}")
-                start_str = start_t
-                end_str = end_t
-            
-            # Extract Identity Info
-            user_id = "Unknown"
-            nick_name = "Unknown"
-            
-            if isinstance(face_res, dict) and face_res.get("code") == 200:
-                 data = face_res.get("data", {})
-                 user_id = data.get("userId", "Unknown")
-                 nick_name = data.get("nickName", "Unknown")
-        
-            query = (
-                f"记录人员进出流水：开始时间 {start_str}，结束时间 {end_str} ，"
-                f"user_id为：{user_id} ，名称：{nick_name}，"
-                f"置信度{yolo_conf:.2f}，device_id: 1。区域是：小仓库。"
-            )
-            
-            print(f"[TimeCapture] Uploading Full Record to Agent: {query}")
-            try:
-                response = self.to_agent.invoke(
-                    query=query
-                )
-                print(f"[TimeCapture] Agent Response: {response}")
-            except Exception as e:
-                print(f"[TimeCapture] Error invoking Agent: {e}")
+            # --- Trigger Asset Analysis ---
+            if self.asset_scanner:
+                self._trigger_asset_analysis(start_t, end_t)
+            # ------------------------------
 
-    def update_local_json_end_time(self, end_time_str):
+            self._send_record_to_agent(record)
+
+    def _trigger_asset_analysis(self, start_t, end_t):
+        """Run asset analysis in a separate thread."""
+        try:
+            threading.Thread(
+                target=self.asset_scanner.analyze_asset_changes,
+                args=(start_t, end_t),
+                daemon=True
+            ).start()
+        except Exception as e:
+            logger.error(f"Error triggering Asset Analysis: {e}")
+
+    def _send_record_to_agent(self, record: Dict[str, Any]):
+        """Format and send the complete record to the Agent."""
+        if not self.to_agent:
+            logger.warning("Agent not available. Skipping upload.")
+            return
+
+        start_t = record.get('start_time')
+        end_t = record.get('end_time')
+        face_res = record.get('face_result', {})
+        yolo_conf = record.get('yolo_confidence', 0.95)
+        
+        # Format times
+        try:
+            s_dt = datetime.fromisoformat(start_t)
+            e_dt = datetime.fromisoformat(end_t)
+            
+            start_str = f"{s_dt.hour}点{s_dt.minute:02d}分"
+            if e_dt.minute == 0:
+                 end_str = f"{e_dt.hour}点"
+            else:
+                 end_str = f"{e_dt.hour}点{e_dt.minute:02d}分"
+                 
+        except Exception as e:
+            logger.error(f"Time formatting error: {e}")
+            start_str = start_t
+            end_str = end_t
+        
+        # Extract Identity Info
+        user_id = "Unknown"
+        nick_name = "Unknown"
+        
+        if isinstance(face_res, dict) and face_res.get("code") == 200:
+             data = face_res.get("data", {})
+             user_id = data.get("userId", "Unknown")
+             nick_name = data.get("nickName", "Unknown")
+    
+        query = (
+            f"记录人员进出流水：开始时间 {start_str}，结束时间 {end_str} ，"
+            f"user_id为：{user_id} ，名称：{nick_name}，"
+            f"置信度{yolo_conf:.2f}，device_id: 1。区域是：小仓库。"
+        )
+        
+        logger.info(f"Uploading Full Record to Agent: {query}")
+        try:
+            response = self.to_agent.invoke(query=query)
+            logger.info(f"Agent Response: {response}")
+        except Exception as e:
+            logger.error(f"Error invoking Agent: {e}")
+
+    def _update_local_json_end_time(self, end_time_str: str) -> List[Dict[str, Any]]:
         """
-        Scans the daily JSONL file for the EARLIEST record that is still 'open' (incomplete).
-        Updates it with the end time.
+        Scans the daily JSONL file for open records and updates them.
         Returns a list of the records that were just closed.
         """
-        # Calculate today's log path (assuming entry was today)
         today_str = datetime.now().strftime("%Y-%m-%d")
         log_dir = os.path.join(project_root, 'logs', 'person')
-        self.json_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
+        json_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
 
-        if not os.path.exists(self.json_path):
-            print("[TimeCapture] Warning: Today's JSONL file not found.")
+        if not os.path.exists(json_path):
+            logger.warning("Today's JSONL file not found.")
             return []
 
         closed_records_list = []
 
         try:
-            lines = []
-            with open(self.json_path, 'r', encoding='utf-8') as f:
+            with open(json_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
             
             if not lines:
                 return []
 
-            # Logic: Close ALL open records
-            # When the warehouse is empty, EVERYONE must have left.
-            # So we iterate through ALL lines and close any that are "realtime_identification".
-            
             updated_count = 0
             
             for i, line in enumerate(lines):
@@ -279,30 +307,25 @@ class TimeCapture:
                             
                         record['event_type'] = "completed_visit"
                         
-                        # Add to list of records to return
                         closed_records_list.append(record)
-                        
-                        # Write back to lines list
                         lines[i] = json.dumps(record, ensure_ascii=False) + "\n"
                         updated_count += 1
                 except:
                     continue
             
             if updated_count > 0:
-                with open(self.json_path, 'w', encoding='utf-8') as f:
+                with open(json_path, 'w', encoding='utf-8') as f:
                     f.writelines(lines)
-                print(f"[TimeCapture] Closed {updated_count} open records. Warehouse is empty.")
-            else:
-                print("[TimeCapture] No open records found to close.")
+                logger.info(f"Closed {updated_count} open records.")
                 
             return closed_records_list
                 
         except Exception as e:
-            print(f"[TimeCapture] Error updating local JSON: {e}")
+            logger.error(f"Error updating local JSON: {e}")
             return []
 
 if __name__ == "__main__":
-    # Test Standalone
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     tc = TimeCapture()
     try:
         tc.start_monitoring()

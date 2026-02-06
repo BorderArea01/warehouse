@@ -1,8 +1,15 @@
-# - 实时监控与人脸检测
+# -*- coding: utf-8 -*-
+"""
+Face Capture Plugin for Warehouse Monitoring System.
+
+This module handles:
+1. Real-time face detection using YOLOv5n.
+2. Identity recognition via external API.
+3. Reporting entry events to the central agent.
+4. Managing session cooldowns to prevent spamming.
+"""
 
 import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-
 import cv2
 import numpy as np
 import requests
@@ -10,253 +17,256 @@ import json
 import os
 import sys
 import torch
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any
 import concurrent.futures
 import threading
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any, List, Tuple
 
-# Add project root to sys.path to import ToAgent
+# Suppress FutureWarning from torch/numpy
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+# Configure logger
+logger = logging.getLogger("FaceCapture")
+
+# Ensure project root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
-sys.path.append(project_root)
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
+# Try importing ToAgent
 try:
     from src.plugins.ToAgent import ToAgent
 except ImportError:
-    # Fallback if running directly from plugins folder
     sys.path.append(os.path.join(project_root, 'src', 'plugins'))
     try:
         from ToAgent import ToAgent
     except ImportError:
-        print("Warning: Could not import ToAgent")
+        logger.warning("Could not import ToAgent. Server reporting will be disabled.")
         ToAgent = None
 
+# ================= Configuration Constants =================
+
+FACE_API_URL = "http://192.168.11.24:8088/system/visitorRecord/recognizeFace"
+CONFIDENCE_THRESHOLD = 0.6
+MIN_DETECTION_DURATION = 0.25  # Seconds
+MIN_FACE_AREA_RATIO = 0.08     # 8% of frame
+MAX_REPORT_COUNT = 2           # Max reports per session
+COOLDOWN_DURATION = 60.0       # Seconds
+REPORT_INTERVAL = 0.3          # Seconds
+
+# ================= Face Capture Service =================
+
 class FaceCapture:
+    """
+    Service for detecting and recognizing faces from the camera feed.
+    """
+
     def __init__(self):
-        self.face_api_url = "http://192.168.11.24:8088/system/visitorRecord/recognizeFace"
+        self.face_api_url = FACE_API_URL
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent() if ToAgent else None
         
-        # Detection Config
-        self.confidence_threshold = 0.6
-        self.min_detection_duration = 0.25 # Reduced from 0.5 to 0.25 for faster response
-        self.min_face_area_ratio = 0.08 # New: Filter small faces (8% of frame)
+        # Configuration
         self.headless = os.environ.get('HEADLESS', 'False').lower() == 'true'
         
-        # Real-time Reporting Config
-        self.max_report_count = 2  # Max times to report per session
-        self.cooldown_duration = 60.0 # Seconds to wait after confirming identity
-        self.report_interval = 0.3 # Reduced from 1.0 to 0.3 for rapid burst reporting
+        # State Management
+        self.identified_cooldowns: Dict[str, float] = {}  # {user_id: expiry_timestamp}
+        self.person_states: Dict[str, Dict] = {}          # {user_id: {'count': 0, 'cooldown_until': 0}}
+        self.state_lock = threading.Lock()
         
-        # Multi-person Tracking State
-        self.identified_cooldowns: Dict[str, float] = {} # {user_id_or_name: timestamp}
-        self.state_lock = threading.Lock() # Lock for thread-safe state updates
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5) # Thread pool for async uploads
+        # Thread Pool for async API calls
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
         
+        # Resources
         self.cap = None
         self.model = None
 
     def get_bj_time(self) -> datetime:
-        """Returns current time in Beijing Timezone."""
+        """Get current time in Beijing Timezone."""
         return datetime.now(self.bj_tz)
 
     def load_model(self):
-        print("[FaceCapture] Loading YOLOv5n model...")
+        """Load YOLOv5n model from Torch Hub."""
+        logger.info("Loading YOLOv5n model...")
         try:
-            # Load model from torch hub
             self.model = torch.hub.load('ultralytics/yolov5', 'yolov5n', pretrained=True)
             self.model.classes = [0]  # Filter to 'person' class
         except Exception as e:
-            print(f"[FaceCapture] Error loading model: {e}")
+            logger.critical(f"Error loading model: {e}")
             sys.exit(1)
 
-    def start_monitoring(self):
-        """
-        Starts the continuous monitoring loop.
-        1. Opens camera.
-        2. Detects people.
-        3. Manages entry/exit events.
-        """
-        print("[FaceCapture] Starting Monitoring Service...")
-        
-        # Initialize Camera (Persistent)
+    def _initialize_camera(self):
+        """Initialize the video capture device."""
         self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
-            print("[FaceCapture] Error: Could not open camera 0.")
-            return
-
-        # Check if running in a headless environment
+            logger.error("Could not open camera 0.")
+            return False
+            
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        
+        # Headless detection logic
         if not self.headless:
-            # Check for DISPLAY environment variable first to avoid Qt core dumps
             if not os.environ.get('DISPLAY'):
-                print("[FaceCapture] No DISPLAY environment variable detected. Switching to HEADLESS mode.")
+                logger.warning("No DISPLAY detected. Switching to HEADLESS mode.")
                 self.headless = True
             else:
                 try:
-                    # Try to open a test window to check if display is available
-                    # If this fails (e.g. Qt error), we switch to headless mode
+                    # Test display capability
                     cv2.imshow("Test", np.zeros((10, 10, 3), dtype=np.uint8))
                     cv2.destroyWindow("Test")
                 except Exception as e:
-                    print(f"[FaceCapture] Display not available ({e}). Switching to HEADLESS mode.")
+                    logger.warning(f"Display not available ({e}). Switching to HEADLESS mode.")
                     self.headless = True
+        return True
 
+    def start_monitoring(self):
+        """Start the main monitoring loop."""
+        logger.info("Starting FaceCapture Monitoring Service...")
+        
+        if not self._initialize_camera():
+            return
 
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-        # Load AI Model
         if self.model is None:
             self.load_model()
             
-        print(f"[FaceCapture] Camera and Model Ready. Monitoring...")
+        logger.info("Camera and Model Ready. Monitoring started.")
 
-        # State Variables
+        # Local state for the loop
         is_tracking = False
-        self.session_report_count = 0 # Counter for uploads in current visual session
+        session_report_count = 0
         session_start_time = None
-        last_seen_time = 0
+        last_seen_time = 0.0
         
-        # Debounce
-        potential_start_time = 0
+        # Debounce state
+        potential_start_time = 0.0
         is_potential_entry = False
         tracking_timeout = 5.0
+        last_scene_recognition_time = 0.0
 
         try:
             while True:
                 ret, frame = self.cap.read()
                 if not ret:
-                    print("Failed to grab frame")
+                    logger.warning("Failed to grab frame. Retrying...")
+                    time.sleep(0.1)
                     continue
 
                 current_time = datetime.now().timestamp()
                 
-                # Cleanup old cooldowns
-                expired_users = [uid for uid, ts in self.identified_cooldowns.items() if current_time > ts]
-                for uid in expired_users:
-                    del self.identified_cooldowns[uid]
+                # Cleanup expired cooldowns
+                self._cleanup_cooldowns(current_time)
 
-                # Inference
+                # Run Inference
                 results = self.model(frame)
                 detections = results.xyxy[0].cpu().numpy()
                 
-                person_detected_now = False
-                valid_detections = [] # Store (x1,y1,x2,y2) for later processing
+                valid_detections = []
                 frame_area = float(frame.shape[0] * frame.shape[1])
+                person_detected_now = False
 
                 for *xyxy, conf, cls in detections:
-                    if conf >= self.confidence_threshold and int(cls) == 0:
+                    if conf >= CONFIDENCE_THRESHOLD and int(cls) == 0:
                         x1, y1, x2, y2 = map(int, xyxy)
                         
-                        # Filter by area (Optimization)
+                        # Filter small objects
                         box_area = (x2 - x1) * (y2 - y1)
-                        if box_area / frame_area < self.min_face_area_ratio:
-                             if not self.headless:
-                                 # Draw grey box for ignored people (too far)
-                                 cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
-                             continue
+                        if box_area / frame_area < MIN_FACE_AREA_RATIO:
+                            if not self.headless:
+                                cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
+                            continue
 
                         person_detected_now = True
                         valid_detections.append((x1, y1, x2, y2, float(conf)))
+                        
                         if not self.headless:
                             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                
-                # --- State Machine ---
-                
+
+                # --- State Machine Logic ---
                 if person_detected_now:
                     last_seen_time = current_time
                     
                     if not is_tracking:
+                        # Entry Phase
                         if not is_potential_entry:
                             is_potential_entry = True
                             potential_start_time = current_time
                         else:
-                            if current_time - potential_start_time >= self.min_detection_duration:
-                                # Confirmed Entry (of SOMEONE)
+                            if current_time - potential_start_time >= MIN_DETECTION_DURATION:
+                                # Confirmed Entry
                                 is_tracking = True
-                                self.session_report_count = 0 # Reset counter for new session
+                                session_report_count = 0
                                 is_potential_entry = False
                                 session_start_time = self.get_bj_time()
                                 
-                                # Process Frame immediately
+                                # Immediate recognition
                                 self.process_frame_for_identities(frame, current_time, detections=valid_detections)
-                                self.session_report_count += 1
-
+                                session_report_count += 1
                     else:
-                            # Already tracking
-                            # Try to recognize faces periodically
-                            # To catch NEW people entering the frame
-                            if not hasattr(self, 'last_scene_recognition_time'):
-                                 self.last_scene_recognition_time = 0
-                            
-                            if current_time - self.last_scene_recognition_time >= self.report_interval:
-                                 # Smart Truncation: Only report first N times per visual session
-                                 if self.session_report_count < self.max_report_count:
-                                     self.process_frame_for_identities(frame, current_time, detections=valid_detections)
-                                     self.last_scene_recognition_time = current_time
-                                     self.session_report_count += 1
-                                 else:
-                                     # Optional: Log that we are skipping upload to save resources
-                                     # print(f"[FaceCapture] Skipping upload. Session limit reached ({self.session_report_count}/{self.max_report_count})")
-                                     pass
-                        
+                        # Tracking Phase
+                        if current_time - last_scene_recognition_time >= REPORT_INTERVAL:
+                            if session_report_count < MAX_REPORT_COUNT:
+                                self.process_frame_for_identities(frame, current_time, detections=valid_detections)
+                                last_scene_recognition_time = current_time
+                                session_report_count += 1
                 else:
+                    # No person detected
                     if is_potential_entry:
                         is_potential_entry = False
                         
                     if is_tracking:
                         if current_time - last_seen_time > tracking_timeout:
-                            # Exit
-                            print(f"[FaceCapture] Timeout. Ending Session started at {session_start_time}")
-                            # For multi-person, "Session" is vague. We just mark the end of activity.
-                            # The individual records are sent via process_frame_for_identities.
-                            # We can send a summary or just close.
+                            logger.info(f"Session ended. Started at {session_start_time}")
                             is_tracking = False
 
+                # UI Display
                 if not self.headless:
-                    # Overlay cooldown info
-                    y_off = 30
-                    for uid, ts in self.identified_cooldowns.items():
-                         rem = int(ts - current_time)
-                         cv2.putText(frame, f"Cooldown {uid}: {rem}s", (10, y_off), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-                         y_off += 20
-                         
+                    self._draw_debug_info(frame, current_time)
                     cv2.imshow('FaceCapture Monitor', frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
                         
         except KeyboardInterrupt:
-            print("\nStopping monitoring...")
+            logger.info("Stopping monitoring...")
         finally:
             if self.cap:
                 self.cap.release()
             cv2.destroyAllWindows()
 
-    def process_frame_for_identities(self, frame, current_time, detections=None):
+    def _cleanup_cooldowns(self, current_time: float):
+        """Remove expired entries from identified_cooldowns."""
+        expired = [uid for uid, ts in self.identified_cooldowns.items() if current_time > ts]
+        for uid in expired:
+            del self.identified_cooldowns[uid]
+
+    def _draw_debug_info(self, frame, current_time: float):
+        """Draw debug overlays on the frame."""
+        y_off = 30
+        for uid, ts in self.identified_cooldowns.items():
+            rem = int(ts - current_time)
+            cv2.putText(frame, f"Cooldown {uid}: {rem}s", (10, y_off), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            y_off += 20
+
+    def process_frame_for_identities(self, frame: np.ndarray, current_time: float, 
+                                   detections: List[Tuple] = None):
         """
-        Captures face, sends to API, checks identity against cooldowns.
-        Supports multi-person detection by cropping and uploading individually.
-        Uses ThreadPoolExecutor for asynchronous processing to meet <1s requirement.
+        Process detected persons in the frame: crop, encode, and recognize.
         """
         bj_time = self.get_bj_time()
-        
-        # If no specific detections provided (e.g. legacy call or manual trigger), use full frame
-        # But for multi-person support, we strongly prefer passing detections.
-        
         targets_to_process = []
         
-        if detections is not None and len(detections) > 0:
-            # Crop each person
+        if detections:
             h, w, _ = frame.shape
             for det in detections:
-                if len(det) >= 4:
-                    x1, y1, x2, y2 = det[:4]
-                    conf = det[4] if len(det) > 4 else 0.0
+                x1, y1, x2, y2 = det[:4]
+                conf = det[4]
                 
-                # Add padding (10%) to ensure face is included and context is preserved
+                # Add 10% padding
                 pad_x = int((x2 - x1) * 0.1)
                 pad_y = int((y2 - y1) * 0.1)
-                
                 crop_x1 = max(0, x1 - pad_x)
                 crop_y1 = max(0, y1 - pad_y)
                 crop_x2 = min(w, x2 + pad_x)
@@ -264,92 +274,80 @@ class FaceCapture:
                 
                 crop_img = frame[crop_y1:crop_y2, crop_x1:crop_x2]
                 if crop_img.size > 0:
-                    # Make a copy to be thread-safe as frame might change
                     targets_to_process.append((crop_img.copy(), conf))
         else:
-            # Fallback: Process full frame (Legacy behavior, prone to single-person only)
+            # Fallback: full frame
             targets_to_process.append((frame.copy(), 0.0))
 
-        print(f"[FaceCapture] Async processing {len(targets_to_process)} target(s)...")
+        logger.debug(f"Async processing {len(targets_to_process)} target(s)...")
 
-        for img_idx, (img_to_send, conf) in enumerate(targets_to_process):
-            # Submit to thread pool
-            self.executor.submit(self._async_recognize_task, img_to_send, current_time, bj_time, img_idx, conf)
+        for img_idx, (img, conf) in enumerate(targets_to_process):
+            self.executor.submit(
+                self._async_recognize_task, img, current_time, bj_time, img_idx, conf
+            )
 
-    def _async_recognize_task(self, img_to_send, current_time, bj_time, img_idx, conf=0.0):
-        """
-        Task to be run in thread pool. Handles recognition and state update.
-        """
+    def _async_recognize_task(self, img_to_send, current_time, bj_time, img_idx, conf):
+        """Worker task for face recognition."""
         try:
-            # 1. Capture & Recognize
+            # 1. API Call
             result = self.capture_and_recognize(img_to_send, bj_time, suffix=f"_{img_idx}")
-            
             if not result:
                 return
 
-            # 2. Extract Identity
+            # 2. Extract Data
             user_id = "unknown"
             nick_name = "Unknown"
+            user_type = "Unknown"
             
             if isinstance(result, dict) and result.get("code") == 200:
                 data = result.get("data", {})
                 if data:
-                        user_id = str(data.get("userId", "unknown"))
-                        nick_name = data.get("nickName", "Unknown")
-            
-            # 3. Check Cooldown (Thread-safe read)
-            # Note: We read without lock for performance, strictly correct would be with lock.
-            # But stale read here just means one extra report, which is acceptable.
+                    user_id = str(data.get("userId", "unknown"))
+                    nick_name = data.get("nickName", "Unknown")
+                    user_type = data.get("userType", "Unknown")
+
+            # 3. Filter Invalid Users
+            if self._should_ignore_user(user_id, nick_name, user_type):
+                return
+
+            # 4. Check Cooldown
             with self.state_lock:
-                 in_cooldown = user_id in self.identified_cooldowns
+                in_cooldown = user_id in self.identified_cooldowns
             
             if in_cooldown:
-                print(f"[FaceCapture] User {nick_name} ({user_id}) is in cooldown. Skipping report.")
+                logger.debug(f"User {nick_name} is in cooldown.")
                 return 
 
-            # 4. Check User Type (Filter Visitors & Unknown)
-            user_type = "Unknown"
-            user_id_str = str(user_id)
-            if isinstance(result, dict) and result.get("code") == 200:
-                    data = result.get("data", {})
-                    user_type = data.get("userType", "Unknown")
-            
-            if "游客" in user_type or "visitor" in user_type.lower():
-                    print(f"[FaceCapture] Ignored Visitor: {nick_name} ({user_type})")
-                    return
-
-            if not user_id_str or user_id_str.lower() in ["unknown", "none", ""] or not nick_name:
-                    print(f"[FaceCapture] Ignored Unknown User (ID: {user_id}, Name: {nick_name})")
-                    return
-                
-            # 5. Valid Report
-            print(f"[FaceCapture] Recognized: {nick_name} ({user_id}). Reporting...")
-            
-            # Update State (Thread-safe write)
+            # 5. Process Valid Report
+            logger.info(f"Recognized: {nick_name} ({user_id})")
             with self.state_lock:
-                 self.handle_person_state(user_id, nick_name, current_time, result, bj_time, conf)
-        
+                self._update_person_state(user_id, nick_name, current_time, result, bj_time, conf)
+
         except Exception as e:
-            print(f"[FaceCapture] Async Task Error: {e}")
+            logger.error(f"Async Task Error: {e}")
 
-
-
-    def handle_person_state(self, user_id, nick_name, current_time, face_result, bj_time, conf=0.0):
-        if not hasattr(self, 'person_states'):
-            self.person_states = {} # {uid: {'count': 0, 'cooldown_until': 0}}
+    def _should_ignore_user(self, user_id: str, nick_name: str, user_type: str) -> bool:
+        """Determine if the recognized user should be ignored."""
+        if "游客" in user_type or "visitor" in user_type.lower():
+            logger.info(f"Ignored Visitor: {nick_name}")
+            return True
             
-        state = self.person_states.get(user_id, {'count': 0, 'cooldown_until': 0})
+        if not user_id or user_id.lower() in ["unknown", "none", ""] or not nick_name:
+            logger.debug(f"Ignored Unknown User (ID: {user_id})")
+            return True
+            
+        return False
+
+    def _update_person_state(self, user_id, nick_name, current_time, face_result, bj_time, conf):
+        """Update report counters and trigger logging/sending."""
+        state = self.person_states.get(user_id, {'count': 0, 'cooldown_until': 0.0})
         
-        # Check Cooldown
         if current_time < state['cooldown_until']:
-            print(f"[FaceCapture] {nick_name} in cooldown. Ignore.")
             return
 
-        # Increment Report Count
         state['count'] += 1
-        print(f"[FaceCapture] Reporting {nick_name} ({state['count']}/{self.max_report_count})")
+        logger.info(f"Reporting {nick_name} ({state['count']}/{MAX_REPORT_COUNT})")
         
-        # Send Data
         record = {
             "start_time": bj_time.isoformat(),
             "face_result": face_result,
@@ -358,160 +356,101 @@ class FaceCapture:
             "yolo_confidence": float(conf)
         }
         
-        # Only save the first record per session to avoid duplicate logs
+        # Only log/send on first detection of the session
         if state['count'] == 1:
             self.save_local_json(record)
-        else:
-            print(f"[FaceCapture] Skip logging for {nick_name} (Verification #{state['count']})")
+            self.send_to_agent(record)
         
-        # Check Max Count
-        if state['count'] >= self.max_report_count:
-            print(f"[FaceCapture] {nick_name} reached max reports. Cooling down for {self.cooldown_duration}s.")
-            state['cooldown_until'] = current_time + self.cooldown_duration
-            state['count'] = 0 # Reset count for after cooldown
+        # Check if max reports reached -> Enter Cooldown
+        if state['count'] >= MAX_REPORT_COUNT:
+            logger.info(f"{nick_name} reached max reports. Cooldown for {COOLDOWN_DURATION}s.")
+            state['cooldown_until'] = current_time + COOLDOWN_DURATION
+            state['count'] = 0
+            
+            # Also update global cooldown map for quick lookup
+            self.identified_cooldowns[user_id] = state['cooldown_until']
             
         self.person_states[user_id] = state
 
     def capture_and_recognize(self, frame, timestamp: datetime, suffix="") -> Optional[Dict[str, Any]]:
-        """
-        Encodes the frame and sends it to the face recognition API.
-        """
+        """Encode image and send to API."""
         try:
             filename = timestamp.strftime(f"%Y%m%d-%H%M%S_face{suffix}.jpg")
-            
-            # Encode image to memory
             success, encoded_img = cv2.imencode('.jpg', frame)
+            
             if not success:
-                print("Error: Failed to encode image.")
+                logger.error("Failed to encode image.")
                 return None
             
-            img_bytes = encoded_img.tobytes()
+            files = {'file': (filename, encoded_img.tobytes(), 'image/jpeg')}
             
-            # Send to API
-            print(f"Sending face image {filename} to API...")
-            files = {
-                'file': (filename, img_bytes, 'image/jpeg')
-            }
-            
+            logger.debug(f"Sending face image {filename} to API...")
             response = requests.post(self.face_api_url, files=files, timeout=30)
-            print(f"Face API Status: {response.status_code}")
             
             try:
                 result = response.json()
-                print(f"Face API Result: {result}")
                 return result
-            except:
-                print(f"Face API Raw Response: {response.text}")
+            except json.JSONDecodeError:
+                logger.error(f"Invalid JSON response: {response.text}")
                 return {"raw": response.text}
                 
         except Exception as e:
-            print(f"Error in capture_and_recognize: {e}")
+            logger.error(f"API Request Error: {e}")
             return None
 
-    def process_entry_event(self, frame=None):
-        """
-        Handles the event when a person enters.
-        1. Captures face and recognizes it.
-        2. Logs start time (Beijing Time).
-        3. Returns the partial record.
-        """
-        start_time = self.get_bj_time()
-        print(f"[FaceCapture] Person Detected at {start_time}")
-        
-        # If no frame provided, capture from camera
-        if frame is None:
-            print("[FaceCapture] No frame provided, capturing snapshot from local camera...")
-            frame = self.capture_snapshot()
-            
-        if frame is None:
-             print("[FaceCapture] Warning: Could not capture frame. Skipping face recognition.")
-             face_result = {"error": "Camera capture failed"}
-        else:
-             # Recognize face
-             face_result = self.capture_and_recognize(frame, start_time)
-        
-        return {
-            "start_time": start_time.isoformat(),
-            "face_result": face_result
-        }
-
-    def capture_snapshot(self):
-        """
-        Captures a single frame from the local camera (Index 0).
-        """
-        try:
-            cap = cv2.VideoCapture(0)
-            if not cap.isOpened():
-                print("[FaceCapture] Error: Could not open camera 0.")
-                return None
-            
-            # Warmup? Sometimes first frame is black
-            # cap.read() 
-            
-            ret, frame = cap.read()
-            cap.release()
-            
-            if not ret:
-                print("[FaceCapture] Error: Failed to read frame from camera.")
-                return None
-                
-            return frame
-        except Exception as e:
-            print(f"[FaceCapture] Error in capture_snapshot: {e}")
-            return None
-
-    def process_exit_event(self, start_record: Dict[str, Any]):
-        """
-        Handles the event when a person leaves.
-        1. Logs end time (Beijing Time).
-        2. Combines with start record.
-        3. Sends complete record to Server/Agent.
-        """
-        if not start_record:
+    def send_to_agent(self, record: Dict[str, Any]):
+        """Send entry event to Agent (without end_time)."""
+        if not self.to_agent:
             return
 
-        end_time = self.get_bj_time()
-        start_time_dt = datetime.fromisoformat(start_record["start_time"])
-        duration = (end_time - start_time_dt).total_seconds()
-        
-        complete_record = {
-            **start_record,
-            "end_time": end_time.isoformat(),
-            "duration_seconds": duration,
-            "device": "raspberry_pi_5_camera"
-        }
-        
-        print(f"[FaceCapture] Person Left at {end_time}. Duration: {duration}s")
-        print(f"[FaceCapture] Complete Record: {json.dumps(complete_record, ensure_ascii=False)}")
-        
-        # Save locally as backup
-        self.save_local_json(complete_record)
-        
-
-    def save_local_json(self, record):
         try:
-            # Daily Log File
+            start_t = record.get('start_time')
+            face_res = record.get('face_result', {})
+            yolo_conf = record.get('yolo_confidence', 0.95)
+            
+            try:
+                s_dt = datetime.fromisoformat(start_t)
+                start_str = f"{s_dt.hour}点{s_dt.minute:02d}分"
+            except (ValueError, TypeError):
+                start_str = start_t
+                
+            user_id = "Unknown"
+            nick_name = "Unknown"
+            if isinstance(face_res, dict) and face_res.get("code") == 200:
+                data = face_res.get("data", {})
+                user_id = data.get("userId", "Unknown")
+                nick_name = data.get("nickName", "Unknown")
+                 
+            query = (
+                f"检测到人员进入：时间 {start_str}，"
+                f"user_id为：{user_id} ，名称：{nick_name}，"
+                f"置信度{yolo_conf:.2f}，device_id: 1。区域是：小仓库入口。"
+            )
+            
+            logger.info(f"Sending Entry Event to Agent: {query}")
+            self.to_agent.invoke(query=query)
+            
+        except Exception as e:
+            logger.error(f"Error sending to Agent: {e}")
+
+    def save_local_json(self, record: Dict[str, Any]):
+        """Save record to local JSONL file."""
+        try:
             today_str = datetime.now().strftime("%Y-%m-%d")
             log_dir = os.path.join(project_root, 'logs', 'person')
             os.makedirs(log_dir, exist_ok=True)
             
             file_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
             
-            # Remove redundant field
-            if 'person_name' in record:
-                del record['person_name']
+            # Remove redundant field if exists
+            record.pop('person_name', None)
                 
             with open(file_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
-            print(f"Error saving local JSON: {e}")
+            logger.error(f"Error saving local JSON: {e}")
 
-# Simple test if run directly
 if __name__ == "__main__":
-    # Mock capture
-    print("Testing FaceCapture plugin...")
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     plugin = FaceCapture()
-    
-    print("Starting Continuous Monitoring...")
-    # This will open camera and loop forever until Ctrl+C
     plugin.start_monitoring()
