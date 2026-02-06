@@ -1,9 +1,7 @@
 opencv-python
 requests
-torch
-pillow
 numpy
-ultralytics
+mediapipe>=0.10.9
 pandas
 tqdm
 seaborn

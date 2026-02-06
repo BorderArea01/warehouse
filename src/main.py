@@ -11,8 +11,10 @@ This script initializes and coordinates the following services:
 import sys
 import os
 import time
+import logging
 import signal
 import threading
+import urllib.request
 from typing import Optional
 
 # Ensure project root is in sys.path
@@ -28,14 +30,20 @@ try:
     from src.plugins.AssetScanning import AssetScanning
 except ImportError as e:
     print(f"Critical Error: Failed to import plugins: {e}")
-    sys.exit(1)
+    # We don't exit here immediately to allow for deferred loading if possible, 
+    # but practically we need them.
+    # However, since we are rewriting them, they might not exist yet if run sequentially.
+    pass
 
-from src.log import get_logger
-logger = get_logger("Main")
-
-import torch
-
-# ... (Logging config) ...
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+    ]
+)
+logger = logging.getLogger("Main")
 
 class WarehouseSystem:
     def __init__(self):
@@ -43,51 +51,55 @@ class WarehouseSystem:
         self.time_capture: Optional[TimeCapture] = None
         self.asset_scanning: Optional[AssetScanning] = None
         self._running = False
-        self.shared_model = None
-        self.model_lock = threading.Lock()
+        self.model_path = None
 
-    def load_shared_model(self):
-        """Load YOLOv5 model once for shared use."""
-        logger.info("Loading Shared YOLOv5n Model...")
-        try:
-            # Load model from torch hub
-            self.shared_model = torch.hub.load('ultralytics/yolov5', 'yolov5n', pretrained=True)
-            self.shared_model.classes = [0]  # Filter to 'person' class
-            logger.info("Shared Model Loaded Successfully.")
-        except Exception as e:
-            logger.critical(f"Error loading shared model: {e}")
-            sys.exit(1)
+    def ensure_model_exists(self):
+        """Download MediaPipe EfficientDet model if not present."""
+        model_dir = os.path.join(current_dir, 'models')
+        os.makedirs(model_dir, exist_ok=True)
+        self.model_path = os.path.join(model_dir, 'efficientdet_lite0.tflite')
+        
+        url = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite'
+        
+        if not os.path.exists(self.model_path):
+            logger.info(f"Downloading MediaPipe model to {self.model_path}...")
+            try:
+                urllib.request.urlretrieve(url, self.model_path)
+                logger.info("Model downloaded successfully.")
+            except Exception as e:
+                logger.critical(f"Failed to download model: {e}")
+                sys.exit(1)
+        else:
+            logger.info(f"Using existing model at {self.model_path}")
 
     def initialize_services(self):
         """Initialize all plugin instances."""
         logger.info("Initializing Warehouse Services...")
         
-        # Load model first
-        if self.shared_model is None:
-            self.load_shared_model()
+        # Ensure model exists
+        self.ensure_model_exists()
             
         try:
             # 1. Asset Scanning (RFID)
             try:
+                # Re-import in case it failed earlier or was just created
+                from src.plugins.AssetScanning import AssetScanning
                 self.asset_scanning = AssetScanning()
             except Exception as e:
                 logger.error(f"AssetScanning initialization failed: {e}. Skipping asset tracking.")
                 self.asset_scanning = None
             
             # 2. Time Capture (Exit Camera)
-            # Inject AssetScanning to trigger analysis on exit
-            # Inject Shared Model and Lock
+            from src.plugins.TimeCapture import TimeCapture
             self.time_capture = TimeCapture(
                 asset_scanner=self.asset_scanning, 
-                model=self.shared_model,
-                model_lock=self.model_lock
+                model_path=self.model_path
             )
             
             # 3. Face Capture (Entry Camera)
-            # Inject Shared Model and Lock
+            from src.plugins.FaceCapture import FaceCapture
             self.face_capture = FaceCapture(
-                model=self.shared_model,
-                model_lock=self.model_lock
+                model_path=self.model_path
             )
             
             logger.info("All services initialized successfully.")
@@ -107,7 +119,7 @@ class WarehouseSystem:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         print("==========================================")
-        print("   Warehouse Monitoring System v1.0")
+        print("   Warehouse Monitoring System v2.0 (MediaPipe)")
         print("   - FaceCapture   (Entry & ID)")
         print("   - AssetScanning (RFID Tracking)")
         print("   - TimeCapture   (Exit Monitoring)")
@@ -160,8 +172,6 @@ class WarehouseSystem:
     def _signal_handler(self, sig, frame):
         """Handle system signals (Ctrl+C, etc)."""
         logger.info("Signal received. Initiating shutdown...")
-        # Note: FaceCapture loop might catch KeyboardInterrupt internally,
-        # but this ensures we handle SIGTERM or other signals.
         self.stop()
 
 def main():
