@@ -271,10 +271,10 @@ class TimeCapture:
             f"置信度{conf:.2f}，device_id: 1。区域是：小仓库。"
         )
         
-        logger.info(f"Uploading Full Record to Agent: {query}")
+        # logger.info(f"Uploading Full Record to Agent: {query}")
         try:
             response = self.to_agent.invoke(query=query)
-            logger.info(f"Agent Response: {response}")
+            # logger.info(f"Agent Response: {response}")
         except Exception as e:
             logger.error(f"Error invoking Agent: {e}")
 
