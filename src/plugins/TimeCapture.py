@@ -47,7 +47,7 @@ except ImportError:
 
 # ================= Configuration Constants =================
 
-RTSP_URL = "rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/Channels/101"
+RTSP_URL = "rtsp://admin:Lzwc%402025.@192.168.10.150:554/Streaming/Channels/101"
 CONFIDENCE_THRESHOLD = 0.6  # Increased to reduce false positives
 PERSON_TIMEOUT = 5.0  # Seconds of no person seen to consider "Left"
 
@@ -271,10 +271,10 @@ class TimeCapture:
             f"置信度{conf:.2f}，device_id: 1。区域是：小仓库。"
         )
         
-        logger.info(f"Uploading Full Record to Agent: {query}")
+        # logger.info(f"Uploading Full Record to Agent: {query}")
         try:
             response = self.to_agent.invoke(query=query)
-            logger.info(f"Agent Response: {response}")
+            # logger.info(f"Agent Response: {response}")
         except Exception as e:
             logger.error(f"Error invoking Agent: {e}")
 

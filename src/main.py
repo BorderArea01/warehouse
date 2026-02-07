@@ -12,6 +12,7 @@ import sys
 import os
 import time
 import logging
+import logging.handlers
 import signal
 import threading
 import urllib.request
@@ -36,11 +37,22 @@ except ImportError as e:
     pass
 
 # Configure Logging
+# Create logs/system directory for main execution logs
+log_dir = os.path.join(project_root, 'logs', 'system')
+os.makedirs(log_dir, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
+        logging.handlers.TimedRotatingFileHandler(
+            os.path.join(log_dir, 'main_run.log'),
+            when='midnight',
+            interval=1,
+            backupCount=30,
+            encoding='utf-8'
+        )
     ]
 )
 logger = logging.getLogger("Main")

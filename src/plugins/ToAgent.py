@@ -1,6 +1,10 @@
 from typing import Any, Dict, Optional
 
 import requests
+import logging
+import json
+
+logger = logging.getLogger("ToAgent")
 
 class ToAgent:
     def __init__(
@@ -25,15 +29,38 @@ class ToAgent:
             "query": query,
             "business_params": business_params or {"additionalProp1": {}},
         }
+        
+        # Concise Log: Request
+        # Truncate query if extremely long, but typically it's short enough.
+        logger.info(f"Sending Agent Request -> {query}")
+        
         headers = {}
-        response = requests.post(
-            self.base_url,
-            headers=headers,
-            json=payload,
-            timeout=timeout,
-        )
         try:
-            data = response.json()
-        except ValueError:
-            data = response.text
-        return {"status_code": response.status_code, "data": data}
+            response = requests.post(
+                self.base_url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            
+            try:
+                data = response.json()
+                # Extract 'msg' or simple status for concise log
+                msg = data.get('msg', '') if isinstance(data, dict) else str(data)
+                # If data is nested, try to get inner msg
+                if isinstance(data, dict) and 'data' in data and isinstance(data['data'], dict):
+                     # Sometimes the inner data has useful info
+                     pass
+                     
+                # Concise Log: Response
+                logger.info(f"Agent Response <- Status: {response.status_code} | Msg: {msg}")
+                
+            except ValueError:
+                data = response.text
+                logger.info(f"Agent Response <- Status: {response.status_code} | Raw: {data[:100]}...")
+                
+            return {"status_code": response.status_code, "data": data}
+            
+        except Exception as e:
+            logger.error(f"Agent Request Failed: {e}")
+            return {"status_code": -1, "data": str(e)}

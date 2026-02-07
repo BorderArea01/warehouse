@@ -68,7 +68,7 @@
 ### 接口与流媒体
 - **仓库摄像头视频流**:
   ```
-  rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/Channels/101
+  rtsp://admin:Lzwc%402025.@192.168.10.150:554/Streaming/Channels/101
   ```
 - **服务器人脸识别接口**:
   ```
@@ -78,3 +78,26 @@
   ```
   http://scenemana.lzwcai.com/api/system/employee/webhook/invoke
   ```
+
+---
+
+## 六、日志与调试 (Logging & Debugging)
+
+### 1. 运行日志
+系统运行时会产生以下日志文件，所有日志均支持自动按日轮转：
+- **系统运行日志**: `logs/system/main_run.log`
+  - 记录程序启动、停止、模块初始化状态以及与服务器交互的简要信息。
+  - **交互日志格式**:
+    - 发送: `Sending Agent Request -> [内容]`
+    - 接收: `Agent Response <- Status: 200 | Msg: [返回消息]`
+- **资产日志**: `logs/asset/YYYY-MM-DD_asset_log.jsonl`
+  - 记录 RFID 标签的每一次上线 (online) 和下线 (offline) 事件。
+- **人员日志**: `logs/person/YYYY-MM-DD_visit_records.jsonl`
+  - 记录人员进入、身份识别结果以及离场闭环的完整数据。
+
+### 2. 权限说明
+RFID 模块通常挂载为 `/dev/ttyACM0`。为了避免每次手动赋权，建议将当前用户加入 `dialout` 组：
+```bash
+sudo usermod -aG dialout $USER
+# 设置后需注销或重启生效
+```

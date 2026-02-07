@@ -70,6 +70,7 @@ warehouse/
 │   │   └── lib/                # 第三方动态库 (libModuleAPI.so)
 │   └── utils/                  # 通用工具类
 ├── logs/                       # 日志目录
+│   ├── system/                 # 系统运行日志 (main_run.log)
 │   ├── person/                 # 人员进出记录 (JSONL)
 │   └── asset/                  # 资产变动记录 (JSONL)
 ├── doc/                        # 项目文档
