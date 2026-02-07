@@ -249,10 +249,35 @@ class AssetScanning:
         today_str = datetime.now().strftime("%Y-%m-%d")
         log_file = os.path.join(self.log_dir, f"{today_str}_asset_log.jsonl")
         
+        epc = tag_data.get('epc')
+        
+        # Deduplication Check
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    # Read lines from end (efficient for large logs? maybe just read all for now)
+                    lines = f.readlines()
+                    if lines:
+                        # Check the last status of this EPC
+                        for line in reversed(lines):
+                            try:
+                                last_rec = json.loads(line)
+                                if last_rec.get('epc') == epc:
+                                    if last_rec.get('event') == event_type:
+                                        # Duplicate event (same state), ignore
+                                        return
+                                    else:
+                                        # State changed, valid event
+                                        break
+                            except json.JSONDecodeError:
+                                continue
+            except Exception as e:
+                logger.warning(f"Failed to check duplicates: {e}")
+
         record = {
             "timestamp": datetime.fromtimestamp(tag_data.get('timestamp', time.time())).isoformat(),
             "event": event_type,
-            "epc": tag_data.get('epc'),
+            "epc": epc,
             "rssi": tag_data.get('rssi'),
             "freq": tag_data.get('freq'),
             "phase": tag_data.get('phase')
