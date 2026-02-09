@@ -37,11 +37,22 @@
     *   海康威视网络摄像头（用于全景监控）。
     *   串口 RFID 读写器（支持 moduleAPI）。
 
+## 辅助工具 (Helper Scripts)
+*   `scripts/test_rfid_web.py`: 启动一个 Web 服务器，用于局域网内手机远程测试 RFID 识别范围和蜂鸣器。
+*   `scripts/fix_firewall.sh`: 自动配置 UFW 防火墙以允许 Web 服务端口 (8000)。
+*   `scripts/verify_env.py`: 环境自检脚本，检查依赖库和 RFID 驱动是否正常。
+
 ## 快速开始 (Quick Start)
 
 ### 1. 安装依赖
 ```bash
-pip install -r requirements.txt
+# 1. 安装系统级依赖
+sudo apt update && sudo apt install -y python3-pip python3-opencv
+
+# 2. 安装 Python 依赖
+pip install -r requirements.txt --break-system-packages
+# 或
+python3 -m pip install mediapipe requests opencv-python-headless --break-system-packages
 ```
 
 ### 2. 运行系统
