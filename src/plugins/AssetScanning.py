@@ -41,9 +41,14 @@ except ImportError:
 # ================= Configuration & Constants =================
 
 # RFID Library Path
-LIB_PATH = os.path.join(current_dir, 'lib', 'libModuleAPI.so')
+# 1. Check project root lib (Preferred)
+LIB_PATH = os.path.join(project_root, 'lib', 'libModuleAPI.so')
 if not os.path.exists(LIB_PATH):
-    LIB_PATH = '/usr/local/lib/libModuleAPI.so'
+    # 2. Check plugin local lib (Legacy)
+    LIB_PATH = os.path.join(current_dir, 'lib', 'libModuleAPI.so')
+    if not os.path.exists(LIB_PATH):
+        # 3. System fallback
+        LIB_PATH = '/usr/local/lib/libModuleAPI.so'
 
 # API Constants
 MT_OK_ERR = 0
@@ -180,7 +185,7 @@ class AssetScanning:
         self.log_dir = os.path.join(project_root, 'logs', 'asset')
         os.makedirs(self.log_dir, exist_ok=True)
         
-        self.to_agent = ToAgent() if ToAgent else None
+        self.to_agent = ToAgent(module_name="AssetScanning") if ToAgent else None
 
     def start_monitoring(self):
         """Start the background monitoring thread."""
@@ -322,6 +327,11 @@ class AssetScanning:
                         record = json.loads(line)
                         rec_time = datetime.fromisoformat(record['timestamp'])
                         
+                        # Fix: Make rec_time timezone-aware if it's naive, to match start_dt
+                        if rec_time.tzinfo is None and start_dt.tzinfo is not None:
+                            # Assume record time is in same timezone as start_dt (e.g. UTC+8)
+                            rec_time = rec_time.replace(tzinfo=start_dt.tzinfo)
+                        
                         if start_dt <= rec_time <= analysis_end_dt:
                             if record['event'] == 'offline':
                                 removed_assets.append(record['epc'])
@@ -331,7 +341,9 @@ class AssetScanning:
                         continue
             
             if not removed_assets and not added_assets:
-                logger.info("No asset changes detected during this visit.")
+                logger.info(f"Analysis Completed: No asset changes detected between {start_time_iso} and {end_time_iso} (+1m).")
+                # Optional: Send a 'No Change' report if you want confirmation? 
+                # For now, just logging it is enough to prove it ran.
                 return
 
             self._send_asset_report(removed_assets, added_assets, start_time_iso, end_time_iso)
