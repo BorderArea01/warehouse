@@ -61,7 +61,7 @@ class TimeCapture:
     def __init__(self, asset_scanner=None, model_path=None):
         self.rtsp_url = RTSP_URL
         self.bj_tz = timezone(timedelta(hours=8))
-        self.to_agent = ToAgent() if ToAgent else None
+        self.to_agent = ToAgent(module_name="TimeCapture") if ToAgent else None
         self.asset_scanner = asset_scanner
         self.model_path = model_path
         

@@ -9,10 +9,12 @@ logger = logging.getLogger("ToAgent")
 class ToAgent:
     def __init__(
         self,
+        module_name: str = "UnknownModule",
         employee_id: str = "2019323642451259394",
         user_id: str = "1868",
         base_url: str = "http://scenemana.lzwcai.com/api/system/employee/webhook/invoke",
     ) -> None:
+        self.module_name = module_name
         self.base_url = base_url
         self.employee_id = employee_id
         self.user_id = user_id
@@ -30,9 +32,19 @@ class ToAgent:
             "business_params": business_params or {"additionalProp1": {}},
         }
         
-        # Concise Log: Request
-        # Truncate query if extremely long, but typically it's short enough.
-        logger.info(f"Sending Agent Request -> {query}")
+        # Enhanced Log: Request
+        # ANSI Colors: \033[96m (Cyan) for Request, \033[94m (Blue) for Response, \033[0m (Reset)
+        COLOR_REQ = "\033[96m"
+        COLOR_RES = "\033[94m"
+        COLOR_RESET = "\033[0m"
+
+        log_req = (
+            f"\n{COLOR_REQ}{'='*30}\n"
+            f"[POST] Module: {self.module_name}\n"
+            f"Sending: {query}\n"
+            f"{'='*30}{COLOR_RESET}"
+        )
+        logger.info(log_req)
         
         headers = {}
         try:
@@ -47,17 +59,25 @@ class ToAgent:
                 data = response.json()
                 # Extract 'msg' or simple status for concise log
                 msg = data.get('msg', '') if isinstance(data, dict) else str(data)
-                # If data is nested, try to get inner msg
-                if isinstance(data, dict) and 'data' in data and isinstance(data['data'], dict):
-                     # Sometimes the inner data has useful info
-                     pass
-                     
-                # Concise Log: Response
-                logger.info(f"Agent Response <- Status: {response.status_code} | Msg: {msg}")
+                
+                # Enhanced Log: Response
+                log_resp = (
+                    f"\n{COLOR_RES}{'='*30}\n"
+                    f"[POST] Module: {self.module_name}\n"
+                    f"Server Response (Status {response.status_code}): {msg}\n"
+                    f"Full Data: {json.dumps(data, ensure_ascii=False)}\n"
+                    f"{'='*30}{COLOR_RESET}"
+                )
+                logger.info(log_resp)
                 
             except ValueError:
                 data = response.text
-                logger.info(f"Agent Response <- Status: {response.status_code} | Raw: {data[:100]}...")
+                logger.info(
+                    f"\n{COLOR_RES}{'='*30}\n"
+                    f"[POST] Module: {self.module_name}\n"
+                    f"Server Response (Status {response.status_code}): {data[:200]}...\n"
+                    f"{'='*30}{COLOR_RESET}"
+                )
                 
             return {"status_code": response.status_code, "data": data}
             

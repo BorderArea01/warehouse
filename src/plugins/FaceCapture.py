@@ -53,7 +53,7 @@ FACE_API_URL = "http://192.168.11.24:8088/system/visitorRecord/recognizeFace"
 CONFIDENCE_THRESHOLD = 0.65  # Increased from 0.5 to reduce false positives
 MIN_DETECTION_DURATION = 0.6   # Increased from 0.25s to 0.6s to prevent glitch triggers
 MIN_FACE_AREA_RATIO = 0.08     # 8% of frame
-REPORT_INTERVAL = 0.5          # Seconds
+REPORT_INTERVAL = 1.0          # Seconds (Rate limit: max 1 request per second)
 
 # ================= Face Capture Service =================
 
@@ -65,7 +65,7 @@ class FaceCapture:
     def __init__(self, model_path: str):
         self.face_api_url = FACE_API_URL
         self.bj_tz = timezone(timedelta(hours=8))
-        self.to_agent = ToAgent() if ToAgent else None
+        self.to_agent = ToAgent(module_name="FaceCapture") if ToAgent else None
         self.model_path = model_path
         
         # Configuration
@@ -192,7 +192,7 @@ class FaceCapture:
                             cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
                         continue
 
-                    logger.info(f"Detected Person: score={score:.2f}, area_ratio={box_area/frame_area:.3f}")
+                    # logger.info(f"Detected Person: score={score:.2f}, area_ratio={box_area/frame_area:.3f}")
                     person_detected_now = True
                     valid_detections.append((x1, y1, x2, y2, float(score)))
                     
