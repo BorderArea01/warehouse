@@ -296,18 +296,21 @@ class AssetScanning:
 
     def analyze_asset_changes(self, start_time_iso: str, end_time_iso: str):
         """
-        Analyze asset changes between start and end times (plus 1 minute buffer).
+        Analyze asset changes between start and end times (plus 5 seconds buffer).
         
         Args:
             start_time_iso: ISO formatted start time of the person's visit.
             end_time_iso: ISO formatted end time of the person's visit.
         """
-        logger.info(f"Analyzing asset changes between {start_time_iso} and {end_time_iso} (+1m)...")
+        logger.info(f"Waiting 5 seconds for asset state to stabilize...")
+        time.sleep(5)
+        
+        logger.info(f"Analyzing asset changes between {start_time_iso} and {end_time_iso} (+5s)...")
         
         try:
             start_dt = datetime.fromisoformat(start_time_iso)
             end_dt = datetime.fromisoformat(end_time_iso)
-            analysis_end_dt = end_dt + timedelta(minutes=1)
+            analysis_end_dt = end_dt + timedelta(seconds=5)
             
             # Locate log file (assuming same day for simplicity)
             today_str = start_dt.strftime("%Y-%m-%d")
@@ -341,7 +344,7 @@ class AssetScanning:
                         continue
             
             if not removed_assets and not added_assets:
-                logger.info(f"Analysis Completed: No asset changes detected between {start_time_iso} and {end_time_iso} (+1m).")
+                logger.info(f"Analysis Completed: No asset changes detected between {start_time_iso} and {end_time_iso} (+5s).")
                 # Optional: Send a 'No Change' report if you want confirmation? 
                 # For now, just logging it is enough to prove it ran.
                 return
@@ -359,7 +362,7 @@ class AssetScanning:
 
         query = (
             f"资产变动报告：\n"
-            f"时段：{start_t} 至 {end_t} (+1min)\n"
+            f"时段：{start_t} 至 {end_t} (+5s)\n"
             f"移除资产 (Out): {', '.join(removed) if removed else '无'}\n"
             f"新增资产 (In): {', '.join(added) if added else '无'}"
         )
