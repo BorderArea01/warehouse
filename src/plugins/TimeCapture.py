@@ -259,6 +259,7 @@ class TimeCapture:
         # Extract Identity Info
         user_id = "Unknown"
         nick_name = "Unknown"
+        img_url = record.get('image_url', '无')
         
         if isinstance(face_res, dict) and face_res.get("code") == 200:
              data = face_res.get("data", {})
@@ -269,6 +270,7 @@ class TimeCapture:
             f"记录人员进出流水：开始时间 {start_str}，结束时间 {end_str} ，"
             f"user_id为：{user_id} ，名称：{nick_name}，"
             f"置信度{conf:.2f}，device_id: 1。区域是：小仓库。"
+            f"minio_url：{img_url}"
         )
         
         # logger.info(f"Uploading Full Record to Agent: {query}")

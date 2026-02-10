@@ -36,16 +36,20 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-# Try importing ToAgent
+# Try importing ToAgent and MinioUploader
 try:
     from src.plugins.ToAgent import ToAgent
+    from src.plugins.Uploader import MinioUploader
 except ImportError:
     sys.path.append(os.path.join(project_root, 'src', 'plugins'))
     try:
         from ToAgent import ToAgent
+        from Uploader import MinioUploader
     except ImportError:
-        logger.warning("Could not import ToAgent. Server reporting will be disabled.")
+        logger.warning("Could not import ToAgent or MinioUploader. Server reporting may be disabled.")
         ToAgent = None
+        MinioUploader = None
+from pathlib import Path
 
 # ================= Configuration Constants =================
 
@@ -66,6 +70,7 @@ class FaceCapture:
         self.face_api_url = FACE_API_URL
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent(module_name="FaceCapture") if ToAgent else None
+        self.uploader = MinioUploader() if MinioUploader else None
         self.model_path = model_path
         
         # Configuration
@@ -327,23 +332,50 @@ class FaceCapture:
                 return 
 
             logger.info(f"Recognized: {nick_name} ({user_id})")
+
+            # Upload Image to MinIO
+            image_url = "无"
+            if self.uploader:
+                try:
+                    # Save temp file
+                    temp_filename = f"temp_face_{int(current_time*1000)}.jpg"
+                    temp_path = Path(project_root) / "logs" / temp_filename
+                    cv2.imwrite(str(temp_path), img_to_send)
+                    
+                    # Upload
+                    upload_res = self.uploader.upload_file(temp_path)
+                    if upload_res:
+                        # Use 'fileUrl' if available, otherwise 'url', otherwise full dict string
+                        image_url = upload_res.get('fileUrl', upload_res.get('url', str(upload_res)))
+                    
+                    # Clean up
+                    if temp_path.exists():
+                        temp_path.unlink()
+                        
+                except Exception as e:
+                    logger.error(f"Image Upload Failed: {e}")
+
             with self.state_lock:
-                self._update_person_state(user_id, nick_name, current_time, result, bj_time, conf)
+                self._update_person_state(user_id, nick_name, current_time, result, bj_time, conf, image_url)
 
         except Exception as e:
             logger.error(f"Async Task Error: {e}")
 
     def _should_ignore_user(self, user_id: str, nick_name: str, user_type: str) -> bool:
+        # Debug: Print raw info to identify why a user might be ignored
+        # logger.info(f"Checking Identity: ID='{user_id}', Name='{nick_name}', Type='{user_type}'")
+
         if "游客" in user_type or "visitor" in user_type.lower():
-            logger.info(f"Ignored Visitor: {nick_name}")
+            logger.warning(f"🚫 Blocked Visitor: {nick_name} (Access Denied)")
             return True
             
         if not user_id or user_id.lower() in ["unknown", "none", ""] or not nick_name:
+            logger.warning(f"🚫 Ignored Invalid Identity: ID='{user_id}', Name='{nick_name}'")
             return True
             
         return False
 
-    def _update_person_state(self, user_id, nick_name, current_time, face_result, bj_time, conf):
+    def _update_person_state(self, user_id, nick_name, current_time, face_result, bj_time, conf, image_url="无"):
         # Determine cooldown based on user type/name
         # If "visitor" or "游客" in name/type, use 1s, else 5s
         is_visitor = "游客" in nick_name or "visitor" in nick_name.lower()
@@ -377,7 +409,8 @@ class FaceCapture:
             "person_name": nick_name,
             "event_type": "realtime_identification",
             "confidence": float(conf),
-            "user_id": user_id  # Store for easier lookup
+            "user_id": user_id,  # Store for easier lookup
+            "image_url": image_url
         }
         
         # Save and Send
@@ -459,6 +492,7 @@ class FaceCapture:
             start_t = record.get('start_time')
             face_res = record.get('face_result', {})
             conf = record.get('confidence', 0.95)
+            img_url = record.get('image_url', '无')
             
             try:
                 s_dt = datetime.fromisoformat(start_t)
@@ -476,7 +510,8 @@ class FaceCapture:
             query = (
                 f"检测到人员进入：时间 {start_str}，"
                 f"user_id为：{user_id} ，名称：{nick_name}，"
-                f"置信度{conf:.2f}，device_id: 1。区域是：小仓库入口。"
+                f"置信度{conf:.2f}，device_id: 1。区域是：小仓库。"
+                f"minio_url：{img_url}"
             )
             
             logger.info(f"Sending Entry Event to Agent: {query}")

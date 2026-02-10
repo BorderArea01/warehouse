@@ -15,7 +15,7 @@
 *   **智能识别**: 集成 Google MediaPipe (EfficientDet-Lite0) 模型检测人员，支持防误触（Debounce 0.6s）与距离过滤。
 *   **身份验证**: 对接后端人脸识别接口，确认人员身份。
 *   **流量控制**: 智能冷却机制，游客冷却 1s，普通人员冷却 5s；支持状态校验，避免重复记录未离场人员。
-*   **实时上报**: 人员进入时立即通知服务器。
+*   **实时上报**: 人员进入时立即通知服务器，并附带抓拍图片链接。
 
 ### 2. 资产流动追踪 (AssetScanning)
 *   **RFID 盘点**: 通过串口连接 RFID 读写器，实时监控在库资产。
@@ -77,6 +77,7 @@ warehouse/
 │   │   ├── TimeCapture.py      # 出口离场监控模块
 │   │   ├── AssetScanning.py    # RFID 资产追踪模块
 │   │   ├── ToAgent.py          # 后端通信接口
+│   │   ├── Uploader.py         # MinIO 文件上传模块
 │   │   ├── VideoBackup.py      # 录像回放下载工具
 │   │   └── lib/                # 第三方动态库 (libModuleAPI.so)
 │   └── utils/                  # 通用工具类
