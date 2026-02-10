@@ -3,10 +3,11 @@
 ## 简介 (Introduction)
 本项目是一个集成了计算机视觉和物联网技术的仓库智能监控系统。它利用 AI 模型进行人员进出管理，结合 RFID 技术进行资产流动追踪，实现对仓库环境的全方位自动化监控。
 
-系统核心包含三大模块：
+系统核心包含四大模块：
 1.  **FaceCapture**: 基于 MediaPipe 的实时人脸检测与身份识别（入口）。
 2.  **AssetScanning**: 基于 RFID 的资产实时盘点与变动追踪。
 3.  **TimeCapture**: 基于 MediaPipe 与 RTSP 视频流的人员离场判定与事件闭环（出口）。
+4.  **MinioUploader**: 基于 MinIO 的抓拍图片自动上传服务。
 
 ## 核心功能 (Features)
 

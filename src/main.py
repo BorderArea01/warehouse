@@ -135,6 +135,7 @@ class WarehouseSystem:
         print("   - FaceCapture   (Entry & ID)")
         print("   - AssetScanning (RFID Tracking)")
         print("   - TimeCapture   (Exit Monitoring)")
+        print("   - MinioUploader (Image Upload)")
         print("==========================================")
 
         try:
