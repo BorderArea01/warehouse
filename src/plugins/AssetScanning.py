@@ -221,6 +221,8 @@ class AssetScanning:
                 # 2. Process detected tags
                 for tag in tags:
                     epc = tag['epc']
+                    if not epc: # Skip empty EPCs
+                        continue
                     
                     if epc not in self.inventory_state:
                         # Event: New Device Online
@@ -336,10 +338,14 @@ class AssetScanning:
                             rec_time = rec_time.replace(tzinfo=start_dt.tzinfo)
                         
                         if start_dt <= rec_time <= analysis_end_dt:
+                            epc_val = record.get('epc', '')
+                            if not epc_val: # Skip empty EPCs in report
+                                continue
+                                
                             if record['event'] == 'offline':
-                                removed_assets.append(record['epc'])
+                                removed_assets.append(epc_val)
                             elif record['event'] == 'online':
-                                added_assets.append(record['epc'])
+                                added_assets.append(epc_val)
                     except (ValueError, KeyError):
                         continue
             
