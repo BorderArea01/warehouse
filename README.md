@@ -28,11 +28,156 @@
 *   **离场判定**: 后台线程实时分析视频流，当仓库内无人（超时）时判定为离场。
 *   **自动闭环**: 计算停留时长，触发资产变动分析，并将完整记录（人员+时间+资产）上报系统。
 
+## 系统架构与流程 (Architecture & Workflow)
+
+### 1. 系统部署拓扑图
+以下拓扑图展示了系统的物理部署架构、硬件连接方式以及网络通信链路。
+
+```mermaid
+graph TD
+    classDef host fill:#E3F2FD,stroke:#1565C0,stroke-width:3px,color:#000000,font-size:16px;
+    classDef device fill:#F5F5F5,stroke:#616161,stroke-width:2px,color:#000000,font-size:14px;
+    classDef server fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px,color:#000000,font-size:14px;
+    classDef db fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px,color:#000000,font-size:14px;
+    classDef note fill:#FFF9C4,stroke:#FBC02D,stroke-width:1px,color:#000000,font-size:13px;
+
+    subgraph Warehouse [🏢 仓库现场 Warehouse Site]
+        direction TB
+        Host[🖥️ 树莓派 Pi 5<br/>Core Controller]:::host
+        
+        subgraph USB_Serial [本地直连 Local I/O]
+            direction LR
+            FaceCam[📷 USB 人脸抓拍相机<br/>Face Camera]:::device
+            RFIDReader[📟 RFID 读写器<br/>RFID Reader]:::device
+            RFIDAnt[📡 RFID 天线<br/>RFID Antenna]:::device
+        end
+        
+        subgraph LAN_Dev [局域网设备 LAN Devices]
+            HikCam[📹 海康威视全景相机<br/>Hikvision Camera]:::device
+        end
+        
+        NoteHost[运行模块 Modules:<br/>1. FaceCapture 人脸<br/>2. AssetScanning 资产<br/>3. TimeCapture 离场<br/>4. MinioUploader 上传]:::note
+        Host -.- NoteHost
+    end
+
+    subgraph Cloud [☁️ 服务器端 Backend Server]
+        direction TB
+        APIGateway[⚙️ 后端 API 服务<br/>Business Logic]:::server
+        MinIO[🗄️ MinIO 对象存储<br/>Image Storage]:::server
+        DB[(🛢️ 数据库<br/>MySQL/Redis)]:::db
+        APIGateway <--> DB
+    end
+
+    FaceCam -- "USB / CSI" --> Host
+    RFIDAnt -- "同轴电缆 Coaxial" --> RFIDReader
+    RFIDReader -- "USB / 串口 ttyACM0" --> Host
+    HikCam -- "RTSP 视频流 TCP" --> Host
+    Host == "HTTP POST JSON<br/>人员/资产数据" ==> APIGateway
+    Host == "HTTP POST File<br/>抓拍图片上传" ==> MinIO
+    
+    linkStyle 0,1,2 stroke:#616161,stroke-width:2px;
+    linkStyle 3 stroke:#1565C0,stroke-width:2px,stroke-dasharray: 5 5;
+    linkStyle 4,5 stroke:#2E7D32,stroke-width:3px;
+```
+
+### 2. 核心流程时序图
+以下时序图展示了 **FaceCapture** (入口)、**AssetScanning** (资产) 和 **TimeCapture** (出口) 三大模块的协同工作流程。
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '18px', 'fontFamily': 'Microsoft YaHei, Arial', 'actorBkg': '#FFFFFF', 'actorBorder': '#000000', 'signalColor': '#000000', 'signalTextColor': '#000000', 'noteBkgColor': '#FFF9C4', 'noteBorderColor': '#FBC02D' }}}%%
+sequenceDiagram
+    autonumber
+    
+    box "硬件层 (Hardware)" #F5F5F5
+        participant Cam as 摄像头/RTSP
+        participant RFID as RFID读写器
+    end
+
+    box "核心插件层 (Plugins)" #E3F2FD
+        participant Face as FaceCapture
+        participant Time as TimeCapture
+        participant Asset as AssetScanning
+        participant Up as MinioUploader
+        participant Agent as ToAgent
+    end
+
+    box "数据层 (Data)" #FFF3E0
+        participant Local as 本地日志(JSONL)
+    end
+
+    box "服务端 (Server)" #E8F5E9
+        participant Server as 后端服务器 API
+    end
+
+    Note over Face, Asset: 系统启动，各模块并行独立运行
+
+    %% ============================================================
+    %% 阶段一：人员进入流程 (Entry Process)
+    %% ============================================================
+    rect rgb(227, 242, 253)
+        Note left of Face: 阶段一：人员进入
+        Cam->>Face: 捕获实时画面
+        Face->>Face: MediaPipe 检测到人员 (Debounce 0.6s)
+        
+        Face->>Server: [POST] /recognizeFace (人脸识别)
+        Server-->>Face: 返回身份信息 (Name, UserID)
+
+        Face->>Up: upload_file(抓拍图片)
+        Up->>Server: [POST] /file/upload (MinIO)
+        Server-->>Up: 返回 fileUrl
+        Up-->>Face: 返回图片链接
+
+        Face->>Local: 写入进入记录 (Start Time, UserID, Url)
+        Face->>Agent: invoke("人员进入通知")
+        Agent->>Server: [POST] /webhook/invoke
+    end
+
+    %% ============================================================
+    %% 阶段二：资产监控 (Asset Monitoring - Continuous)
+    %% ============================================================
+    rect rgb(255, 248, 225)
+        Note left of Asset: 阶段二：资产监控 (持续运行)
+        loop 每100ms盘点
+            RFID->>Asset: 读取标签列表 (Inventory)
+            alt 发现新标签
+                Asset->>Local: 记录 Event: online
+            else 标签消失 > 3s
+                Asset->>Local: 记录 Event: offline
+            end
+        end
+    end
+
+    %% ============================================================
+    %% 阶段三：人员离开与闭环 (Exit & Analysis)
+    %% ============================================================
+    rect rgb(232, 245, 233)
+        Note left of Time: 阶段三：人员离开与闭环
+        Cam->>Time: RTSP 视频流分析
+        Time->>Time: 检测仓库无人 (超时 5s)
+        
+        Time->>Local: 查找并关闭“进行中”的记录
+        Local-->>Time: 返回完整记录 (含 Start/End Time)
+
+        par 并行处理：资产分析
+            Time->>Asset: analyze_asset_changes(Start, End)
+            Asset->>Asset: sleep(5s) 等待状态稳定
+            Asset->>Local: 读取该时段内的资产日志
+            Asset->>Asset: 计算 移除(Out) 和 新增(In) 列表
+            Asset->>Agent: invoke("资产变动报告")
+            Agent->>Server: [POST] /webhook/invoke
+        and 并行处理：流水上报
+            Time->>Agent: invoke("完整进出流水记录")
+            Note right of Time: 包含身份、起止时间、图片链接
+            Agent->>Server: [POST] /webhook/invoke
+        end
+    end
+```
+
 ## 环境要求 (Requirements)
 *   Python 3.8+
 *   依赖库：`mediapipe`, `opencv-python`, `requests`, `numpy` 等。
 *   硬件：
-    *   树莓派 Pi 5 或同等性能工控机。
+    *   树莓派 Pi 5 或更高性能工控机（Ubuntu24.04）。
     *   USB/CSI 摄像头（用于人脸抓拍）。
     *   海康威视网络摄像头（用于全景监控）。
     *   串口 RFID 读写器（支持 moduleAPI）。
