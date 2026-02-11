@@ -1,4 +1,4 @@
-# Warehouse Monitoring System
+# 仓管系统 (Warehouse Monitoring System)
 
 ## 简介 (Introduction)
 本项目是一个集成了计算机视觉和物联网技术的仓库智能监控系统。它利用 AI 模型进行人员进出管理，结合 RFID 技术进行资产流动追踪，实现对仓库环境的全方位自动化监控。
@@ -242,3 +242,6 @@ warehouse/
 *   **FaceCapture.py**: API 地址、检测阈值、冷却时间。
 *   **TimeCapture.py**: RTSP 地址、离场超时时间。
 *   **AssetScanning.py**: 串口地址 (`/dev/ttyACM0`)、离场超时判定。
+
+## 贡献者名单 (Contributors)
+[![Contributors](https://contrib.rocks/image?repo=BorderArea01/warehouse)](https://github.com/BorderArea01/warehouse/graphs/contributors)
