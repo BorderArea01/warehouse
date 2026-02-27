@@ -20,10 +20,10 @@
 
 ### 2. 资产流动追踪 (AssetScanning)
 *   **门框模式**: 将 RFID 天线安装在门框处，标签经过时短暂被读取。
-*   **切换判定**: 检测到“短暂上线→下线”即判定为一次出入库切换：
-    *   上次状态为不在库 → 记为 moved_in（入库）
-    *   上次状态为在库 → 记为 moved_out（出库）
-*   **变动分析**: 在人员离场后，自动分析该时段内的资产变动情况（带走或放入的物品）。
+*   **切换判定**: 检测到“短暂上线→下线”即判定为一次**状态变动 (Toggle)**。
+    *   不再区分入库/出库，统一上报变动事件。
+    *   由服务器端根据历史状态判断具体的出入方向。
+*   **变动分析**: 在人员离场后，自动分析该时段内的资产变动情况。
 *   **数据同步**: 生成资产变动报告并上报服务器。
 
 ### 3. 离场监控与事件闭环 (TimeCapture)
@@ -143,7 +143,7 @@ sequenceDiagram
         loop 每100ms盘点
             RFID->>Asset: 读取标签列表 (Inventory)
             alt 标签出现后在3s内消失
-                Asset->>Local: 切换状态 moved_in / moved_out
+                Asset->>Local: 记录 Event: toggle (State Change)
             else 持续存在
                 Asset->>Asset: 继续观察直到消失
             end
@@ -165,7 +165,7 @@ sequenceDiagram
             Time->>Asset: analyze_asset_changes(Start, End)
             Asset->>Asset: sleep(5s) 等待状态稳定
             Asset->>Local: 读取该时段内的资产日志
-            Asset->>Asset: 计算 移除(Out) 和 新增(In) 列表
+            Asset->>Asset: 统计 toggle 事件列表
             Asset->>Agent: invoke("资产变动报告")
             Agent->>Server: [POST] /webhook/invoke
         and 并行处理：流水上报
