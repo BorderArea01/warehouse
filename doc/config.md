@@ -35,14 +35,15 @@
 ## 二、资产流水 (Asset Scanning)
 > 源码位置: [`src/plugins/AssetScanning.py`](src/plugins/AssetScanning.py)
 
-1. **RFID 监测**：树莓派通过串口（`/dev/ttyACM0`）外接 RFID 读取模块，后台线程持续（100ms间隔）盘点标签。
-2. **状态追踪**：
-    - **上线 (Online)**：检测到新 EPC 标签，记录为上线事件。
-    - **下线 (Offline)**：标签连续 **3秒** 未被检测到，记录为下线/移除事件。
-3. **日志记录**：所有变动事件实时写入 `logs/asset/YYYY-MM-DD_asset_log.jsonl`。
-4. **变动分析**：当 `TimeCapture` 判定人员离开时，触发分析逻辑：
-    - **等待稳定**：程序会先等待 **5秒**，让 RFID 读写器充分扫描当前状态。
-    - **统计变动**：统计该人员滞留期间（进入时间 -> 离开时间+5秒）发生的资产移除和新增情况，并上报给服务器。
+1. **门框模式**：RFID 天线安装在门框，标签经过时会短暂被读取。
+2. **切换判定**：当检测到标签“出现→在 3 秒内消失”，即视为一次出入库事件：
+   - 上次状态为不在库 → 记录 `moved_in`
+   - 上次状态为在库 → 记录 `moved_out`
+3. **状态恢复**：系统启动时根据当天资产日志的最新事件恢复每个 EPC 的在库状态。
+4. **日志记录**：事件实时写入 `logs/asset/YYYY-MM-DD_asset_log.jsonl`，字段包含 `event`(`moved_in|moved_out`)、`timestamp`、`epc` 等。
+5. **变动分析**：当 `TimeCapture` 判定人员离开时，触发分析逻辑：
+   - **等待稳定**：先等待 **5秒**。
+   - **统计变动**：在该时间窗内统计 `moved_in`(新增) 与 `moved_out`(移除) 列表并上报。
 
 ---
 
@@ -103,7 +104,7 @@
     - 发送 (Cyan): `[POST] Module: FaceCapture ...`
     - 接收 (Blue): `[POST] Module: FaceCapture Server Response ...`
 - **资产日志**: `logs/asset/YYYY-MM-DD_asset_log.jsonl`
-  - 记录 RFID 标签的每一次上线 (online) 和下线 (offline) 事件。
+  - 记录门框切换事件：`moved_in` 与 `moved_out`。
 - **人员日志**: `logs/person/YYYY-MM-DD_visit_records.jsonl`
   - 记录人员进入、身份识别结果以及离场闭环的完整数据。
 

@@ -19,8 +19,10 @@
 *   **实时上报**: 人员进入时立即通知服务器，并附带抓拍图片链接。
 
 ### 2. 资产流动追踪 (AssetScanning)
-*   **RFID 盘点**: 通过串口连接 RFID 读写器，实时监控在库资产。
-*   **状态追踪**: 自动记录资产上线（入库）和下线（出库/移除）事件。
+*   **门框模式**: 将 RFID 天线安装在门框处，标签经过时短暂被读取。
+*   **切换判定**: 检测到“短暂上线→下线”即判定为一次出入库切换：
+    *   上次状态为不在库 → 记为 moved_in（入库）
+    *   上次状态为在库 → 记为 moved_out（出库）
 *   **变动分析**: 在人员离场后，自动分析该时段内的资产变动情况（带走或放入的物品）。
 *   **数据同步**: 生成资产变动报告并上报服务器。
 
@@ -134,16 +136,16 @@ sequenceDiagram
     end
 
     %% ============================================================
-    %% 阶段二：资产监控 (Asset Monitoring - Continuous)
+    %% 阶段二：资产监控 (Doorframe Toggle)
     %% ============================================================
     rect rgb(255, 248, 225)
-        Note left of Asset: 阶段二：资产监控 (持续运行)
+        Note left of Asset: 门框模式：标签经过即被短暂读取
         loop 每100ms盘点
             RFID->>Asset: 读取标签列表 (Inventory)
-            alt 发现新标签
-                Asset->>Local: 记录 Event: online
-            else 标签消失 > 3s
-                Asset->>Local: 记录 Event: offline
+            alt 标签出现后在3s内消失
+                Asset->>Local: 切换状态 moved_in / moved_out
+            else 持续存在
+                Asset->>Asset: 继续观察直到消失
             end
         end
     end
@@ -241,7 +243,7 @@ warehouse/
 
 *   **FaceCapture.py**: API 地址、检测阈值、冷却时间。
 *   **TimeCapture.py**: RTSP 地址、离场超时时间。
-*   **AssetScanning.py**: 串口地址 (`/dev/ttyACM0`)、离场超时判定。
+*   **AssetScanning.py**: 串口地址 (`/dev/ttyACM0`)、门框消失超时判定（默认 3s）。
 
 ## 贡献者名单 (Contributors)
 [![Contributors](https://contrib.rocks/image?repo=BorderArea01/warehouse)](https://github.com/BorderArea01/warehouse/graphs/contributors)

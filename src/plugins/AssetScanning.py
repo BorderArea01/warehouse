@@ -56,7 +56,7 @@ MAXANTCNT = 16
 MAXEMBDATALEN = 128
 MAXEPCBYTESCNT = 62
 DEFAULT_DEPARTURE_TIMEOUT = 3.0  # Seconds to consider a tag gone
-DEFAULT_CONN_STR = "/dev/ttyACM0"
+DEFAULT_CONN_STR = "/dev/ttyACM2"
 
 # ================= CTypes Structures =================
 
@@ -176,7 +176,9 @@ class AssetScanning:
         self.departure_timeout = departure_timeout
         
         self.reader = RfidReader()
-        self.inventory_state: Dict[str, float] = {}  # {epc: last_seen_timestamp}
+        self.inventory_state: Dict[str, float] = {}
+        self.first_seen: Dict[str, float] = {}
+        self.in_stock_state: Dict[str, bool] = {}
         
         self.connected = False
         self.running = False
@@ -186,6 +188,7 @@ class AssetScanning:
         os.makedirs(self.log_dir, exist_ok=True)
         
         self.to_agent = ToAgent(module_name="AssetScanning") if ToAgent else None
+        self._load_state_from_logs()
 
     def start_monitoring(self):
         """Start the background monitoring thread."""
@@ -223,12 +226,8 @@ class AssetScanning:
                     epc = tag['epc']
                     if not epc: # Skip empty EPCs
                         continue
-                    
                     if epc not in self.inventory_state:
-                        # Event: New Device Online
-                        self._log_asset_event(tag, "online")
-                        logger.info(f"[+] Asset Online: {epc} (RSSI: {tag['rssi']})")
-                    
+                        self.first_seen[epc] = tag.get('timestamp', current_time)
                     self.inventory_state[epc] = current_time
                 
                 # 3. Process missing tags (Offline)
@@ -246,10 +245,14 @@ class AssetScanning:
                 departed_epcs.append(epc)
         
         for epc in departed_epcs:
-            # Event: Device Offline
-            self._log_asset_event({'epc': epc, 'timestamp': current_time}, "offline")
-            logger.info(f"[-] Asset Offline: {epc}")
+            prev_in = self.in_stock_state.get(epc, False)
+            event_type = "moved_out" if prev_in else "moved_in"
+            start_ts = self.first_seen.get(epc, current_time)
+            self._log_asset_event({'epc': epc, 'timestamp': current_time, 'start_ts': start_ts}, event_type)
+            self.in_stock_state[epc] = not prev_in
             del self.inventory_state[epc]
+            if epc in self.first_seen:
+                del self.first_seen[epc]
 
     def _log_asset_event(self, tag_data: Dict[str, Any], event_type: str):
         """Append event to daily JSONL log."""
@@ -287,7 +290,8 @@ class AssetScanning:
             "epc": epc,
             "rssi": tag_data.get('rssi'),
             "freq": tag_data.get('freq'),
-            "phase": tag_data.get('phase')
+            "phase": tag_data.get('phase'),
+            "start_ts": datetime.fromtimestamp(tag_data.get('start_ts', tag_data.get('timestamp', time.time()))).isoformat()
         }
         
         try:
@@ -341,10 +345,10 @@ class AssetScanning:
                             epc_val = record.get('epc', '')
                             if not epc_val: # Skip empty EPCs in report
                                 continue
-                                
-                            if record['event'] == 'offline':
+                            ev = record.get('event')
+                            if ev in ('moved_out', 'offline'):
                                 removed_assets.append(epc_val)
-                            elif record['event'] == 'online':
+                            elif ev in ('moved_in', 'online'):
                                 added_assets.append(epc_val)
                     except (ValueError, KeyError):
                         continue
@@ -359,6 +363,30 @@ class AssetScanning:
             
         except Exception as e:
             logger.error(f"Analysis Error: {e}")
+
+    def _load_state_from_logs(self):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        log_file = os.path.join(self.log_dir, f"{today_str}_asset_log.jsonl")
+        state: Dict[str, bool] = {}
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        try:
+                            rec = json.loads(line)
+                            epc = rec.get('epc')
+                            ev = rec.get('event')
+                            if not epc or not ev:
+                                continue
+                            if ev in ('moved_in', 'online'):
+                                state[epc] = True
+                            elif ev in ('moved_out', 'offline'):
+                                state[epc] = False
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+        self.in_stock_state = state
 
     def _send_asset_report(self, removed: List[str], added: List[str], start_t: str, end_t: str):
         """Send formatted report to the Agent."""
