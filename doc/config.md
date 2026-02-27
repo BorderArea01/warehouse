@@ -36,14 +36,19 @@
 > 源码位置: [`src/plugins/AssetScanning.py`](src/plugins/AssetScanning.py)
 
 1. **门框模式**：RFID 天线安装在门框，标签经过时会短暂被读取。
-2. **切换判定**：当检测到标签“出现→在 3 秒内消失”，即视为一次出入库事件：
-   - 上次状态为不在库 → 记录 `moved_in`
-   - 上次状态为在库 → 记录 `moved_out`
-3. **状态恢复**：系统启动时根据当天资产日志的最新事件恢复每个 EPC 的在库状态。
-4. **日志记录**：事件实时写入 `logs/asset/YYYY-MM-DD_asset_log.jsonl`，字段包含 `event`(`moved_in|moved_out`)、`timestamp`、`epc` 等。
-5. **变动分析**：当 `TimeCapture` 判定人员离开时，触发分析逻辑：
-   - **等待稳定**：先等待 **5秒**。
-   - **统计变动**：在该时间窗内统计 `moved_in`(新增) 与 `moved_out`(移除) 列表并上报。
+2. **日志记录**：
+   - 当标签被读取到时，记录 `online` 事件。
+   - 当标签消失超过 3 秒时，记录 `offline` 事件。
+   - 日志实时写入 `logs/asset/YYYY-MM-DD_asset_log.jsonl`。
+3. **变动分析 (Analysis)**：当 `TimeCapture` 判定人员离开时，触发分析逻辑：
+   - 扫描该时段内的 `online` 和 `offline` 日志。
+   - 将同一 EPC 的成对 `online` -> `offline` 记录重建为一次“状态变动 (Toggle)”会话。
+   - **去重逻辑**：
+     - 如果某 EPC 在该时段内出现了偶数次变动（如：进 -> 出），视为状态复原，不上报。
+     - 仅上报出现奇数次变动的 EPC（取最后一次变动详情）。
+4. **数据上报**：
+   - 向服务器发送去重后的 EPC 列表和变动详情。
+   - 文本消息仅包含变动发生的时间点（End Time）。
 
 ---
 
@@ -104,12 +109,12 @@
     - 发送 (Cyan): `[POST] Module: FaceCapture ...`
     - 接收 (Blue): `[POST] Module: FaceCapture Server Response ...`
 - **资产日志**: `logs/asset/YYYY-MM-DD_asset_log.jsonl`
-  - 记录门框切换事件：`moved_in` 与 `moved_out`。
+  - 记录原始事件：`online` (上线) 与 `offline` (下线/消失)。
 - **人员日志**: `logs/person/YYYY-MM-DD_visit_records.jsonl`
   - 记录人员进入、身份识别结果以及离场闭环的完整数据。
 
 ### 2. 权限说明
-RFID 模块通常挂载为 `/dev/ttyACM0`。为了避免每次手动赋权，建议将当前用户加入 `dialout` 组：
+RFID 模块通常挂载为 `/dev/ttyACM0` （ACM0~2）。为了避免每次手动赋权，建议将当前用户加入 `dialout` 组：
 ```bash
 sudo usermod -aG dialout $USER
 # 设置后需注销或重启生效

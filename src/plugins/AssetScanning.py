@@ -178,7 +178,6 @@ class AssetScanning:
         self.reader = RfidReader()
         self.inventory_state: Dict[str, float] = {}
         self.first_seen: Dict[str, float] = {}
-        self.in_stock_state: Dict[str, bool] = {}
         
         self.connected = False
         self.running = False
@@ -188,7 +187,10 @@ class AssetScanning:
         os.makedirs(self.log_dir, exist_ok=True)
         
         self.to_agent = ToAgent(module_name="AssetScanning") if ToAgent else None
-        self._load_state_from_logs()
+
+    def _format_time(self, dt_obj: datetime) -> str:
+        """Format datetime as requested: YYYY-MM-DD_HH:MM:SS"""
+        return dt_obj.strftime("%Y-%m-%d_%H:%M:%S")
 
     def start_monitoring(self):
         """Start the background monitoring thread."""
@@ -228,6 +230,7 @@ class AssetScanning:
                         continue
                     if epc not in self.inventory_state:
                         self.first_seen[epc] = tag.get('timestamp', current_time)
+                        self._log_asset_event(tag, "online")
                     self.inventory_state[epc] = current_time
                 
                 # 3. Process missing tags (Offline)
@@ -245,11 +248,11 @@ class AssetScanning:
                 departed_epcs.append(epc)
         
         for epc in departed_epcs:
-            prev_in = self.in_stock_state.get(epc, False)
-            event_type = "moved_out" if prev_in else "moved_in"
-            start_ts = self.first_seen.get(epc, current_time)
-            self._log_asset_event({'epc': epc, 'timestamp': current_time, 'start_ts': start_ts}, event_type)
-            self.in_stock_state[epc] = not prev_in
+            last_seen_float = self.inventory_state[epc]
+            # Log offline event
+            # Use last_seen_float as the event timestamp (when it actually disappeared)
+            self._log_asset_event({'epc': epc, 'timestamp': last_seen_float}, "offline")
+            
             del self.inventory_state[epc]
             if epc in self.first_seen:
                 del self.first_seen[epc]
@@ -261,37 +264,22 @@ class AssetScanning:
         
         epc = tag_data.get('epc')
         
-        # Deduplication Check
-        if os.path.exists(log_file):
-            try:
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    # Read lines from end (efficient for large logs? maybe just read all for now)
-                    lines = f.readlines()
-                    if lines:
-                        # Check the last status of this EPC
-                        for line in reversed(lines):
-                            try:
-                                last_rec = json.loads(line)
-                                if last_rec.get('epc') == epc:
-                                    if last_rec.get('event') == event_type:
-                                        # Duplicate event (same state), ignore
-                                        return
-                                    else:
-                                        # State changed, valid event
-                                        break
-                            except json.JSONDecodeError:
-                                continue
-            except Exception as e:
-                logger.warning(f"Failed to check duplicates: {e}")
+        # Deduplication logic is removed for online/offline events to capture all raw changes
+        
+        # Event time (when it happened)
+        event_ts = tag_data.get('timestamp', time.time())
+        event_dt = datetime.fromtimestamp(event_ts)
+        
+        # Log write time (now)
+        now = datetime.now()
 
         record = {
-            "timestamp": datetime.fromtimestamp(tag_data.get('timestamp', time.time())).isoformat(),
+            "timestamp": self._format_time(now),
             "event": event_type,
             "epc": epc,
+            "event_time": self._format_time(event_dt),
             "rssi": tag_data.get('rssi'),
-            "freq": tag_data.get('freq'),
-            "phase": tag_data.get('phase'),
-            "start_ts": datetime.fromtimestamp(tag_data.get('start_ts', tag_data.get('timestamp', time.time()))).isoformat()
+            "ant": tag_data.get('ant')
         }
         
         try:
@@ -318,6 +306,10 @@ class AssetScanning:
             end_dt = datetime.fromisoformat(end_time_iso)
             analysis_end_dt = end_dt + timedelta(seconds=5)
             
+            # Format times for report
+            start_str = self._format_time(start_dt)
+            end_str = self._format_time(end_dt)
+            
             # Locate log file (assuming same day for simplicity)
             today_str = start_dt.strftime("%Y-%m-%d")
             log_file = os.path.join(self.log_dir, f"{today_str}_asset_log.jsonl")
@@ -326,84 +318,112 @@ class AssetScanning:
                 logger.warning(f"No asset logs found for {today_str}.")
                 return
             
-            removed_assets: List[str] = []
-            added_assets: List[str] = []
+            changes: List[Dict[str, Any]] = []
+            epc_list: List[str] = []
+            
+            # Dictionary to count occurrences: {epc: [record1, record2, ...]}
+            epc_occurrences: Dict[str, List[Dict]] = {}
+            
+            # Helper to reconstruct sessions from online/offline events
+            # epc -> start_time_str
+            pending_sessions: Dict[str, str] = {}
             
             # Scan log for events within the window
             with open(log_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     try:
                         record = json.loads(line)
-                        rec_time = datetime.fromisoformat(record['timestamp'])
+                        event = record.get('event')
+                        epc = record.get('epc')
+                        if not epc:
+                            continue
                         
-                        # Fix: Make rec_time timezone-aware if it's naive, to match start_dt
-                        if rec_time.tzinfo is None and start_dt.tzinfo is not None:
-                            # Assume record time is in same timezone as start_dt (e.g. UTC+8)
-                            rec_time = rec_time.replace(tzinfo=start_dt.tzinfo)
+                        event_time_str = record.get('event_time', record.get('timestamp'))
                         
-                        if start_dt <= rec_time <= analysis_end_dt:
-                            epc_val = record.get('epc', '')
-                            if not epc_val: # Skip empty EPCs in report
+                        if event == 'online':
+                            pending_sessions[epc] = event_time_str
+                            
+                        elif event == 'offline':
+                            start_str = pending_sessions.get(epc)
+                            if not start_str:
+                                # Orphaned offline (maybe online was before log started or missed)
+                                # We can't determine duration properly, but we have an end time.
+                                # Let's assume a short duration or just use the end time.
+                                start_str = event_time_str 
+                            
+                            # Construct a "toggle" record from this session
+                            try:
+                                end_dt_val = datetime.strptime(event_time_str, "%Y-%m-%d_%H:%M:%S")
+                                start_dt_val = datetime.strptime(start_str, "%Y-%m-%d_%H:%M:%S")
+                                duration = int((end_dt_val - start_dt_val).total_seconds() * 1000)
+                            except ValueError:
                                 continue
-                            ev = record.get('event')
-                            if ev in ('moved_out', 'offline'):
-                                removed_assets.append(epc_val)
-                            elif ev in ('moved_in', 'online'):
-                                added_assets.append(epc_val)
-                    except (ValueError, KeyError):
+
+                            # Make timezone aware if needed
+                            if end_dt_val.tzinfo is None and start_dt.tzinfo is not None:
+                                end_dt_val = end_dt_val.replace(tzinfo=start_dt.tzinfo)
+
+                            # Check if this session ended during the visit window
+                            if start_dt <= end_dt_val <= analysis_end_dt:
+                                if epc not in epc_occurrences:
+                                    epc_occurrences[epc] = []
+                                
+                                epc_occurrences[epc].append({
+                                    'epc': epc,
+                                    'start_ts': start_str,
+                                    'end_ts': event_time_str,
+                                    'duration_ms': duration
+                                })
+                                
+                            # Clear pending
+                            if epc in pending_sessions:
+                                del pending_sessions[epc]
+                                
+                    except (ValueError, KeyError, json.JSONDecodeError):
                         continue
             
-            if not removed_assets and not added_assets:
-                logger.info(f"Analysis Completed: No asset changes detected between {start_time_iso} and {end_time_iso} (+5s).")
-                # Optional: Send a 'No Change' report if you want confirmation? 
-                # For now, just logging it is enough to prove it ran.
-                return
-
-            self._send_asset_report(removed_assets, added_assets, start_time_iso, end_time_iso)
+            # Deduplication logic: Only report EPCs with ODD number of occurrences
+            for epc, records in epc_occurrences.items():
+                if len(records) % 2 != 0:
+                    # Odd number of toggles -> Status Changed
+                    # We report the latest occurrence detail
+                    latest_record = records[-1]
+                    changes.append({
+                        'epc': epc,
+                        'start_ts': latest_record.get('start_time'),
+                        'end_ts': latest_record.get('end_time'),
+                        'duration_ms': latest_record.get('duration_ms')
+                    })
+                    epc_list.append(epc)
+                else:
+                    # Even number of toggles -> Status Unchanged (Cancelled out)
+                    logger.info(f"Ignored EPC {epc} (detected {len(records)} times, cancelled out).")
+            
+            self._send_asset_report(epc_list, changes, start_str, end_str)
             
         except Exception as e:
             logger.error(f"Analysis Error: {e}")
 
-    def _load_state_from_logs(self):
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        log_file = os.path.join(self.log_dir, f"{today_str}_asset_log.jsonl")
-        state: Dict[str, bool] = {}
-        if os.path.exists(log_file):
-            try:
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        try:
-                            rec = json.loads(line)
-                            epc = rec.get('epc')
-                            ev = rec.get('event')
-                            if not epc or not ev:
-                                continue
-                            if ev in ('moved_in', 'online'):
-                                state[epc] = True
-                            elif ev in ('moved_out', 'offline'):
-                                state[epc] = False
-                        except Exception:
-                            continue
-            except Exception:
-                pass
-        self.in_stock_state = state
-
-    def _send_asset_report(self, removed: List[str], added: List[str], start_t: str, end_t: str):
+    def _send_asset_report(self, epc_list: List[str], changes: List[Dict[str, Any]], start_t: str, end_t: str):
         """Send formatted report to the Agent."""
         if not self.to_agent:
             logger.warning("Agent not available. Cannot send report.")
             return
 
         query = (
-            f"资产变动报告：\n"
-            f"时段：{start_t} 至 {end_t} (+5s)\n"
-            f"移除资产 (Out): {', '.join(removed) if removed else '无'}\n"
-            f"新增资产 (In): {', '.join(added) if added else '无'}"
+            f"资产状态变动（门框模式）\n"
+            f"变动时间：{end_t}\n"
+            f"切换设备数：{len(epc_list)}\n"
+            f"EPC 列表：{', '.join(epc_list) if epc_list else '无'}"
         )
+        
+        business_params = {
+            "changes": changes
+        }
         
         logger.info(f"Reporting to Agent: {query}")
         try:
-            self.to_agent.invoke(query=query)
+            self.to_agent.invoke(query=query, business_params=business_params)
         except Exception as e:
             logger.error(f"Failed to send report to Agent: {e}")
 
