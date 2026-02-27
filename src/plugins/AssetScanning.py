@@ -288,13 +288,10 @@ class AssetScanning:
         except Exception as e:
             logger.error(f"Failed to write log: {e}")
 
-    def analyze_asset_changes(self, start_time_iso: str, end_time_iso: str):
+    def get_asset_changes(self, start_time_iso: str, end_time_iso: str) -> List[str]:
         """
-        Analyze asset changes between start and end times (plus 5 seconds buffer).
-        
-        Args:
-            start_time_iso: ISO formatted start time of the person's visit.
-            end_time_iso: ISO formatted end time of the person's visit.
+        Analyze asset changes between start and end times (plus 5 seconds buffer) and return the list.
+        This is a synchronous blocking call.
         """
         logger.info(f"Waiting 5 seconds for asset state to stabilize...")
         time.sleep(5)
@@ -302,13 +299,19 @@ class AssetScanning:
         logger.info(f"Analyzing asset changes between {start_time_iso} and {end_time_iso} (+5s)...")
         
         try:
-            start_dt = datetime.fromisoformat(start_time_iso)
-            end_dt = datetime.fromisoformat(end_time_iso)
+            # Handle both ISO and custom format for start_time
+            if 'T' in start_time_iso:
+                start_dt = datetime.fromisoformat(start_time_iso)
+            else:
+                start_dt = datetime.strptime(start_time_iso, "%Y-%m-%d_%H:%M:%S")
+                
+            # Handle both ISO and custom format for end_time
+            if 'T' in end_time_iso:
+                end_dt = datetime.fromisoformat(end_time_iso)
+            else:
+                end_dt = datetime.strptime(end_time_iso, "%Y-%m-%d_%H:%M:%S")
+                
             analysis_end_dt = end_dt + timedelta(seconds=5)
-            
-            # Format times for report
-            start_str = self._format_time(start_dt)
-            end_str = self._format_time(end_dt)
             
             # Locate log file (assuming same day for simplicity)
             today_str = start_dt.strftime("%Y-%m-%d")
@@ -316,9 +319,8 @@ class AssetScanning:
             
             if not os.path.exists(log_file):
                 logger.warning(f"No asset logs found for {today_str}.")
-                return
+                return []
             
-            changes: List[Dict[str, Any]] = []
             epc_list: List[str] = []
             
             # Dictionary to count occurrences: {epc: [record1, record2, ...]}
@@ -346,12 +348,8 @@ class AssetScanning:
                         elif event == 'offline':
                             start_str = pending_sessions.get(epc)
                             if not start_str:
-                                # Orphaned offline (maybe online was before log started or missed)
-                                # We can't determine duration properly, but we have an end time.
-                                # Let's assume a short duration or just use the end time.
                                 start_str = event_time_str 
                             
-                            # Construct a "toggle" record from this session
                             try:
                                 end_dt_val = datetime.strptime(event_time_str, "%Y-%m-%d_%H:%M:%S")
                                 start_dt_val = datetime.strptime(start_str, "%Y-%m-%d_%H:%M:%S")
@@ -385,47 +383,34 @@ class AssetScanning:
             # Deduplication logic: Only report EPCs with ODD number of occurrences
             for epc, records in epc_occurrences.items():
                 if len(records) % 2 != 0:
-                    # Odd number of toggles -> Status Changed
-                    # We report the latest occurrence detail
-                    latest_record = records[-1]
-                    changes.append({
-                        'epc': epc,
-                        'start_ts': latest_record.get('start_time'),
-                        'end_ts': latest_record.get('end_time'),
-                        'duration_ms': latest_record.get('duration_ms')
-                    })
                     epc_list.append(epc)
                 else:
-                    # Even number of toggles -> Status Unchanged (Cancelled out)
                     logger.info(f"Ignored EPC {epc} (detected {len(records)} times, cancelled out).")
             
-            self._send_asset_report(epc_list, changes, start_str, end_str)
+            return epc_list
             
         except Exception as e:
             logger.error(f"Analysis Error: {e}")
+            return []
+
+    def analyze_asset_changes(self, start_time_iso: str, end_time_iso: str):
+        """
+        Legacy method for backward compatibility or direct invocation.
+        Now delegates to get_asset_changes but NO LONGER sends a report.
+        It just logs the result for debugging purposes.
+        """
+        # Note: get_asset_changes already does the 5s sleep.
+        epc_list = self.get_asset_changes(start_time_iso, end_time_iso)
+        
+        if epc_list:
+            logger.info(f"Asset Analysis Result (Internal): Detected {len(epc_list)} changed assets: {epc_list}")
+        else:
+            logger.info("Asset Analysis Result (Internal): No changes detected.")
 
     def _send_asset_report(self, epc_list: List[str], changes: List[Dict[str, Any]], start_t: str, end_t: str):
-        """Send formatted report to the Agent."""
-        if not self.to_agent:
-            logger.warning("Agent not available. Cannot send report.")
-            return
-
-        query = (
-            f"资产状态变动（门框模式）\n"
-            f"变动时间：{end_t}\n"
-            f"切换设备数：{len(epc_list)}\n"
-            f"EPC 列表：{', '.join(epc_list) if epc_list else '无'}"
-        )
-        
-        business_params = {
-            "changes": changes
-        }
-        
-        logger.info(f"Reporting to Agent: {query}")
-        try:
-            self.to_agent.invoke(query=query, business_params=business_params)
-        except Exception as e:
-            logger.error(f"Failed to send report to Agent: {e}")
+        """Send formatted report to the Agent. (Deprecated/Unused)"""
+        # This method is kept but not called by default flow anymore
+        pass
 
 if __name__ == "__main__":
     # Setup simple logging for standalone execution

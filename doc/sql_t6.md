@@ -85,7 +85,6 @@
 | 字段 | 类型 | 约束 | 说明 |
 | :--- | :--- | :--- | :--- |
 | event_id | BIGSERIAL | PK | 事实主键 (自增) |
-| user_id | BIGINT | | 用户主键 |
 | candidate_asset_ids | JSONB | | 候选资产 IDs |
 | candidate_user_ids | JSONB | | 候选人员 IDs |
 | start_time | TIMESTAMPTZ | | 开始时间 |
@@ -93,7 +92,6 @@
 | created_at | TIMESTAMPTZ | NOT NULL | 创建时间 |
 
 **索引 (Indexes)**:
-- `idx_event_set_user_start` (`user_id`, `start_time`)
 - `idx_event_set_start_time` (`start_time`)
 
 ---

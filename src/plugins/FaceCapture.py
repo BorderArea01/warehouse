@@ -404,7 +404,7 @@ class FaceCapture:
         logger.info(f"Reporting Entry: {nick_name} (Cooldown: {cooldown_duration}s)")
         
         record = {
-            "start_time": bj_time.isoformat(),
+            "start_time": bj_time.strftime("%Y-%m-%d_%H:%M:%S"),
             "face_result": face_result,
             "person_name": nick_name,
             "event_type": "realtime_identification",
@@ -494,11 +494,18 @@ class FaceCapture:
             conf = record.get('confidence', 0.95)
             img_url = record.get('image_url', '无')
             
+            # Since start_time is already formatted in local JSON, we use it directly
+            # Or try to parse it if needed, but it should be a string already
+            start_str = start_t
+            
+            # Legacy support: if it's ISO format, convert it
             try:
-                s_dt = datetime.fromisoformat(start_t)
-                start_str = s_dt.strftime("%Y-%m-%d_%H:%M:%S")
+                # Check if it looks like ISO (contains T)
+                if 'T' in start_str:
+                    s_dt = datetime.fromisoformat(start_str)
+                    start_str = s_dt.strftime("%Y-%m-%d_%H:%M:%S")
             except (ValueError, TypeError):
-                start_str = start_t
+                pass
                 
             user_id = "Unknown"
             nick_name = "Unknown"
@@ -508,9 +515,12 @@ class FaceCapture:
                 nick_name = data.get("nickName", "Unknown")
                  
             query = (
-                f"检测到人员进入：时间 {start_str}，"
-                f"user_id为：{user_id} ，名称：{nick_name}，"
-                f"置信度{conf:.2f}，device_id: 1。区域是：小仓库。"
+                f"检测到人员进入：\n"
+                f"时间：{start_str}；\n"
+                f"区域：小仓库；\n"
+                f"device_id: 1；\n"
+                f"user_id：{user_id}；\n"
+                f"名称：{nick_name}；\n"
                 f"minio_url：{img_url}"
             )
             

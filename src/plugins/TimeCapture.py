@@ -197,7 +197,7 @@ class TimeCapture:
         """
         Handle exit event: update local logs, trigger asset analysis, and report to agent.
         """
-        end_time_str = end_time.isoformat()
+        end_time_str = end_time.strftime("%Y-%m-%d_%H:%M:%S")
         
         # 1. Update Local File and Get Full Records
         closed_records = self._update_local_json_end_time(end_time_str)
@@ -211,9 +211,20 @@ class TimeCapture:
             start_t = record.get('start_time')
             end_t = record.get('end_time')
             
-            # --- Trigger Asset Analysis ---
+            # --- Trigger Asset Analysis and Wait for Result ---
+            asset_changes = []
             if self.asset_scanner:
-                self._trigger_asset_analysis(start_t, end_t)
+                # We need to run analysis synchronously or wait for it to get the result
+                # But to keep it simple, we can modify analyze_asset_changes to return data
+                # Or run it and let it update a shared state. 
+                # For now, let's call it synchronously to get the list.
+                # WARNING: This will block the thread for 5s (stabilization)
+                try:
+                    asset_changes = self.asset_scanner.get_asset_changes(start_t, end_t)
+                except Exception as e:
+                    logger.error(f"Error getting asset changes: {e}")
+            
+            record['asset_changes'] = asset_changes
             # ------------------------------
 
             self._send_record_to_agent(record)
@@ -241,17 +252,21 @@ class TimeCapture:
         conf = record.get('confidence', 0.95)
         
         # Format times
+        start_str = start_t
+        end_str = end_t
+        
+        # Legacy support: if they are ISO format, convert them
         try:
-            s_dt = datetime.fromisoformat(start_t)
-            e_dt = datetime.fromisoformat(end_t)
+            if 'T' in str(start_str):
+                s_dt = datetime.fromisoformat(start_str)
+                start_str = s_dt.strftime("%Y-%m-%d_%H:%M:%S")
             
-            start_str = s_dt.strftime("%Y-%m-%d_%H:%M:%S")
-            end_str = e_dt.strftime("%Y-%m-%d_%H:%M:%S")
+            if 'T' in str(end_str):
+                e_dt = datetime.fromisoformat(end_str)
+                end_str = e_dt.strftime("%Y-%m-%d_%H:%M:%S")
                  
         except Exception as e:
             logger.error(f"Time formatting error: {e}")
-            start_str = start_t
-            end_str = end_t
         
         # Extract Identity Info
         user_id = "Unknown"
@@ -264,10 +279,10 @@ class TimeCapture:
              nick_name = data.get("nickName", "Unknown")
     
         query = (
-            f"记录人员进出流水：开始时间 {start_str}，结束时间 {end_str} ，"
-            f"user_id为：{user_id} ，名称：{nick_name}，"
-            f"置信度{conf:.2f}，device_id: 1。区域是：小仓库。"
-            f"minio_url：{img_url}"
+            f"检测到人员已经离开：\n"
+            f"时间：{end_str}；\n"
+            f"区域：小仓库；\n"
+            f"资产变动情况：{json.dumps(record.get('asset_changes', []), ensure_ascii=False)}"
         )
         
         # logger.info(f"Uploading Full Record to Agent: {query}")
@@ -309,10 +324,22 @@ class TimeCapture:
                         # Update this record
                         record['end_time'] = end_time_str
                         try:
-                            start_dt = datetime.fromisoformat(record['start_time'])
-                            end_dt = datetime.fromisoformat(end_time_str)
+                            # Handle both ISO and custom format for start_time
+                            start_time_val = record['start_time']
+                            if 'T' in start_time_val:
+                                start_dt = datetime.fromisoformat(start_time_val)
+                            else:
+                                start_dt = datetime.strptime(start_time_val, "%Y-%m-%d_%H:%M:%S")
+                                
+                            # Handle both ISO and custom format for end_time
+                            if 'T' in end_time_str:
+                                end_dt = datetime.fromisoformat(end_time_str)
+                            else:
+                                end_dt = datetime.strptime(end_time_str, "%Y-%m-%d_%H:%M:%S")
+                                
                             record['duration_seconds'] = (end_dt - start_dt).total_seconds()
-                        except:
+                        except Exception as e:
+                            logger.error(f"Duration calc error: {e}")
                             record['duration_seconds'] = 0
                             
                         record['event_type'] = "completed_visit"

@@ -35,7 +35,6 @@ CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
 -- 3. 事件集合 (event_set)
 CREATE TABLE IF NOT EXISTS event_set (
     event_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT,
     candidate_asset_ids JSONB,
     candidate_user_ids JSONB,
     start_time TIMESTAMPTZ,
@@ -43,7 +42,6 @@ CREATE TABLE IF NOT EXISTS event_set (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_event_set_user_start ON event_set(user_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_event_set_start_time ON event_set(start_time);
 
 -- 4. 出入库记录 (access_logs)
