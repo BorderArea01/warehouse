@@ -10,9 +10,9 @@ class ToAgent:
     def __init__(
         self,
         module_name: str = "UnknownModule",
-        employee_id: str = "2019323642451259394",
-        user_id: str = "1868",
-        base_url: str = "http://your-agent-host/api/system/employee/webhook/invoke",
+        employee_id: str = "REDACTED_ID_5",
+        user_id: str = "748",
+        base_url: str = "http://private-host:8082/api/system/employee/webhook/invoke",
     ) -> None:
         self.module_name = module_name
         self.base_url = base_url
