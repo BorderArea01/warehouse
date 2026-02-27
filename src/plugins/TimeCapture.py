@@ -245,11 +245,8 @@ class TimeCapture:
             s_dt = datetime.fromisoformat(start_t)
             e_dt = datetime.fromisoformat(end_t)
             
-            start_str = f"{s_dt.hour}点{s_dt.minute:02d}分"
-            if e_dt.minute == 0:
-                 end_str = f"{e_dt.hour}点"
-            else:
-                 end_str = f"{e_dt.hour}点{e_dt.minute:02d}分"
+            start_str = s_dt.strftime("%Y-%m-%d_%H:%M:%S")
+            end_str = e_dt.strftime("%Y-%m-%d_%H:%M:%S")
                  
         except Exception as e:
             logger.error(f"Time formatting error: {e}")

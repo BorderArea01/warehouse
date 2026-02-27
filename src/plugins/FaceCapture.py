@@ -496,7 +496,7 @@ class FaceCapture:
             
             try:
                 s_dt = datetime.fromisoformat(start_t)
-                start_str = f"{s_dt.hour}点{s_dt.minute:02d}分"
+                start_str = s_dt.strftime("%Y-%m-%d_%H:%M:%S")
             except (ValueError, TypeError):
                 start_str = start_t
                 
