@@ -21,7 +21,7 @@ class VideoBackup:
     def __init__(self, output_dir="backups"):
         # RTSP 配置 (根据 doc/config.md)
         # 注意: 这里使用 tracks/101 进行回放，而不是 Channels/101 (直播)
-        self.base_rtsp_url = "rtsp://admin:Lzwc%402025.@192.168.13.140:554/Streaming/tracks/101"
+        self.base_rtsp_url = "rtsp://admin:Lzwc%402025.@192.168.10.150:554/Streaming/tracks/101"
         self.output_dir = output_dir
         
         if not os.path.exists(self.output_dir):
