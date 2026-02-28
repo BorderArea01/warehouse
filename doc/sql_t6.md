@@ -12,6 +12,8 @@
 **索引 (Indexes)**:
 - `idx_assets_category_class` (`asset_class`)
 - `idx_assets_category_parent` (`parent_id`)
+- `uniq_parent_class` (`asset_class`) WHERE `parent_id` IS NULL
+- `uniq_child_class` (`parent_id`, `asset_class`) WHERE `parent_id` IS NOT NULL
 
 ---
 
@@ -39,26 +41,7 @@
 
 ---
 
-### 3. 出入库记录 (access_logs)
-记录资产进出、设备信息。
-
-| 字段 | 类型 | 约束 | 说明 |
-| :--- | :--- | :--- | :--- |
-| log_id | BIGSERIAL | PK | 记录主键 (自增) |
-| asset_id | BIGINT | FK, NOT NULL | 资产主键 |
-| event_id | BIGINT | | 关联事件主键 |
-| event_time | TIMESTAMPTZ | NOT NULL | 事件发生时间 |
-| event_type | BOOLEAN | NOT NULL | 出入库标识 (TRUE: 在库/入库, FALSE: 出库) |
-| created_at | TIMESTAMPTZ | NOT NULL | 创建时间 |
-
-**索引 (Indexes)**:
-- `idx_access_logs_asset_time` (`asset_id`, `event_time`)
-- `idx_access_logs_event_time` (`event_time`)
-- `idx_access_logs_event_id` (`event_id`)
-
----
-
-### 4. 人员流动记录 (presence_logs)
+### 3. 人员流动记录 (presence_logs)
 用于视频监控记录人员出入与出现时间。
 
 | 字段 | 类型 | 约束 | 说明 |
@@ -79,7 +62,7 @@
 
 ---
 
-### 5. 事件集合 (event_set)
+### 4. 事件集合 (event_set)
 用于各个日志的汇总事件。
 
 | 字段 | 类型 | 约束 | 说明 |
@@ -96,7 +79,7 @@
 
 ---
 
-### 6. 确认事件 (confirm_event)
+### 5. 资产变动事实 (assets_event)
 用于记录人工确认或系统自动确认的事件状态。
 
 | 字段 | 类型 | 约束 | 说明 |
@@ -104,14 +87,15 @@
 | confirm_id | BIGSERIAL | PK | 确认事件主键 (自增) |
 | asset_id | BIGINT | FK | 资产主键 |
 | user_id | BIGINT | | 用户主键 |
-| event_time | TIMESTAMPTZ | | 事件时间 |
-| status | VARCHAR(64) | | 确认单状态 (完成、待确认、异常) |
+| event_id | BIGINT | | 关联事件主键 |
+| event_type | BOOLEAN | NOT NULL | 出入库标识 (TRUE: 在库/入库, FALSE: 出库) |
+| status | VARCHAR(64) | | 确认状态 (完成、待确认、异常) |
 | zone | VARCHAR(64) | | 发生地点 |
 | remark | VARCHAR(64) | | 备注 |
 | created_at | TIMESTAMPTZ | NOT NULL | 创建时间 |
 
 **索引 (Indexes)**:
-- `idx_confirm_event_asset_time` (`asset_id`, `event_time`)
-- `idx_confirm_event_user` (`user_id`)
-- `idx_confirm_event_status` (`status`)
-- `idx_confirm_event_time` (`event_time`)
+- `idx_assets_event_asset_id` (`asset_id`)
+- `idx_assets_event_user` (`user_id`)
+- `idx_assets_event_status` (`status`)
+- `idx_assets_event_id` (`event_id`)

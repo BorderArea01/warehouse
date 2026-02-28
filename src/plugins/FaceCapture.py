@@ -32,7 +32,7 @@ from mediapipe.tasks.python import vision
 from src.config import Config
 try:
     from src.plugins.ToAgent import ToAgent
-    from src.plugins.Uploader import MinioUploader
+    from src.plugins.MinioUploader import MinioUploader
 except ImportError:
     ToAgent = None
     MinioUploader = None
