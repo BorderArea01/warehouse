@@ -25,31 +25,16 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-# Configure logger
-logger = logging.getLogger("TimeCapture")
-
-# Ensure project root is in sys.path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(current_dir))
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-# Try importing ToAgent
+# Local Imports
+from src.config import Config
 try:
     from src.plugins.ToAgent import ToAgent
 except ImportError:
-    sys.path.append(os.path.join(project_root, 'src', 'plugins'))
-    try:
-        from ToAgent import ToAgent
-    except ImportError:
-        logger.warning("Could not import ToAgent. Server reporting will be disabled.")
-        ToAgent = None
+    # Fallback for circular imports or testing if needed
+    ToAgent = None
 
-# ================= Configuration Constants =================
-
-RTSP_URL = "rtsp://admin:Lzwc%402025.@192.168.10.150:554/Streaming/Channels/101"
-CONFIDENCE_THRESHOLD = 0.6  # Increased to reduce false positives
-PERSON_TIMEOUT = 5.0  # Seconds of no person seen to consider "Left"
+# Configure logger
+logger = logging.getLogger("TimeCapture")
 
 # ================= Time Capture Service =================
 
@@ -59,16 +44,14 @@ class TimeCapture:
     """
 
     def __init__(self, asset_scanner=None, model_path=None):
-        self.rtsp_url = RTSP_URL
+        self.rtsp_url = Config.RTSP_URL_TIMECAPTURE
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent(module_name="TimeCapture") if ToAgent else None
         self.asset_scanner = asset_scanner
         self.model_path = model_path
         
-        self.json_path = os.path.join(project_root, 'visit_records.jsonl')
-        
-        self.confidence_threshold = CONFIDENCE_THRESHOLD
-        self.person_timeout = PERSON_TIMEOUT
+        self.confidence_threshold = Config.TIME_CONFIDENCE_THRESHOLD
+        self.person_timeout = Config.TIME_PERSON_TIMEOUT
         
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
@@ -214,11 +197,6 @@ class TimeCapture:
             # --- Trigger Asset Analysis and Wait for Result ---
             asset_changes = []
             if self.asset_scanner:
-                # We need to run analysis synchronously or wait for it to get the result
-                # But to keep it simple, we can modify analyze_asset_changes to return data
-                # Or run it and let it update a shared state. 
-                # For now, let's call it synchronously to get the list.
-                # WARNING: This will block the thread for 5s (stabilization)
                 try:
                     asset_changes = self.asset_scanner.get_asset_changes(start_t, end_t)
                 except Exception as e:
@@ -229,55 +207,22 @@ class TimeCapture:
 
             self._send_record_to_agent(record)
 
-    def _trigger_asset_analysis(self, start_t, end_t):
-        """Run asset analysis in a separate thread."""
-        try:
-            threading.Thread(
-                target=self.asset_scanner.analyze_asset_changes,
-                args=(start_t, end_t),
-                daemon=True
-            ).start()
-        except Exception as e:
-            logger.error(f"Error triggering Asset Analysis: {e}")
-
     def _send_record_to_agent(self, record: Dict[str, Any]):
         """Format and send the complete record to the Agent."""
         if not self.to_agent:
             logger.warning("Agent not available. Skipping upload.")
             return
 
-        start_t = record.get('start_time')
         end_t = record.get('end_time')
-        face_res = record.get('face_result', {})
-        conf = record.get('confidence', 0.95)
-        
         # Format times
-        start_str = start_t
         end_str = end_t
-        
-        # Legacy support: if they are ISO format, convert them
         try:
-            if 'T' in str(start_str):
-                s_dt = datetime.fromisoformat(start_str)
-                start_str = s_dt.strftime("%Y-%m-%d_%H:%M:%S")
-            
-            if 'T' in str(end_str):
-                e_dt = datetime.fromisoformat(end_str)
-                end_str = e_dt.strftime("%Y-%m-%d_%H:%M:%S")
-                 
-        except Exception as e:
-            logger.error(f"Time formatting error: {e}")
+             if 'T' in str(end_str):
+                 e_dt = datetime.fromisoformat(end_str)
+                 end_str = e_dt.strftime("%Y-%m-%d_%H:%M:%S")
+        except Exception:
+            pass
         
-        # Extract Identity Info
-        user_id = "Unknown"
-        nick_name = "Unknown"
-        img_url = record.get('image_url', '无')
-        
-        if isinstance(face_res, dict) and face_res.get("code") == 200:
-             data = face_res.get("data", {})
-             user_id = data.get("userId", "Unknown")
-             nick_name = data.get("nickName", "Unknown")
-    
         query = (
             f"检测到人员已经离开：\n"
             f"时间：{end_str}；\n"
@@ -285,10 +230,8 @@ class TimeCapture:
             f"资产变动情况：{json.dumps(record.get('asset_changes', []), ensure_ascii=False)}"
         )
         
-        # logger.info(f"Uploading Full Record to Agent: {query}")
         try:
-            response = self.to_agent.invoke(query=query)
-            # logger.info(f"Agent Response: {response}")
+            self.to_agent.invoke(query=query)
         except Exception as e:
             logger.error(f"Error invoking Agent: {e}")
 
@@ -298,7 +241,7 @@ class TimeCapture:
         Returns a list of the records that were just closed.
         """
         today_str = datetime.now().strftime("%Y-%m-%d")
-        log_dir = os.path.join(project_root, 'logs', 'person')
+        log_dir = os.path.join(Config.PROJECT_ROOT, 'logs', 'person')
         json_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
 
         if not os.path.exists(json_path):
@@ -323,23 +266,21 @@ class TimeCapture:
                     if record.get('event_type') != 'completed_visit':
                         # Update this record
                         record['end_time'] = end_time_str
+                        
+                        start_time_val = record['start_time']
                         try:
-                            # Handle both ISO and custom format for start_time
-                            start_time_val = record['start_time']
                             if 'T' in start_time_val:
                                 start_dt = datetime.fromisoformat(start_time_val)
                             else:
                                 start_dt = datetime.strptime(start_time_val, "%Y-%m-%d_%H:%M:%S")
                                 
-                            # Handle both ISO and custom format for end_time
                             if 'T' in end_time_str:
                                 end_dt = datetime.fromisoformat(end_time_str)
                             else:
                                 end_dt = datetime.strptime(end_time_str, "%Y-%m-%d_%H:%M:%S")
                                 
                             record['duration_seconds'] = (end_dt - start_dt).total_seconds()
-                        except Exception as e:
-                            logger.error(f"Duration calc error: {e}")
+                        except Exception:
                             record['duration_seconds'] = 0
                             
                         record['event_type'] = "completed_visit"
@@ -360,7 +301,3 @@ class TimeCapture:
         except Exception as e:
             logger.error(f"Error updating local JSON: {e}")
             return []
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    print("Run via main.py to ensure model path is provided.")

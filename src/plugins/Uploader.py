@@ -3,16 +3,18 @@ from requests import Session
 from pathlib import Path
 import json
 import logging
+from src.config import Config
 
-logger = logging.getLogger("MinioUploader")
+logger = Config.get_logger("MinioUploader")
 
 class MinioUploader:
     def __init__(
         self,
-        upload_url: str = "http://scenemana.lzwcai.com/api/system/file/upload",
+        upload_url: str = None,
         session: Session = None,
     ):
-        self.upload_url = upload_url
+        # Use Config.MINIO_UPLOAD_URL as default if not provided
+        self.upload_url = upload_url or Config.MINIO_UPLOAD_URL
         self.session = session or requests.Session()
 
     def upload_file(
@@ -20,6 +22,10 @@ class MinioUploader:
         file_path: Path,
     ) -> dict:
         url = self.upload_url
+        if not url:
+            logger.error("Upload URL is not configured.")
+            raise ValueError("Upload URL is not configured.")
+            
         file_size = file_path.stat().st_size
         file_size_mb = file_size / 1024 / 1024
         
@@ -51,14 +57,17 @@ class MinioUploader:
 
         with file_path.open("rb") as f:
             files = {"file": (file_path.name, f)}
-            resp = self.session.post(
-                url,
-                files=files,
-                timeout=300,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-
+            try:
+                resp = self.session.post(
+                    url,
+                    files=files,
+                    timeout=300,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+            except Exception as e:
+                logger.error(f"Upload Request Failed: {e}")
+                raise
 
         server_msg = result.get("msg", "")
         server_code = result.get("code")

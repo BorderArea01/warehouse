@@ -11,18 +11,24 @@ This script initializes and coordinates the following services:
 import sys
 import os
 import time
-import logging
-import logging.handlers
 import signal
 import threading
 import urllib.request
+import traceback
 from typing import Optional
 
-# Ensure project root is in sys.path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
-if project_root not in sys.path:
+# Local Imports
+try:
+    from src.config import Config
+except ImportError:
+    # If running as script from src/, add project root to path
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
     sys.path.append(project_root)
+    from src.config import Config
+
+# Configure Logging via Config
+logger = Config.get_logger("Main")
 
 # Import Plugins
 try:
@@ -30,32 +36,10 @@ try:
     from src.plugins.TimeCapture import TimeCapture
     from src.plugins.AssetScanning import AssetScanning
 except ImportError as e:
-    print(f"Critical Error: Failed to import plugins: {e}")
-    # We don't exit here immediately to allow for deferred loading if possible, 
-    # but practically we need them.
-    # However, since we are rewriting them, they might not exist yet if run sequentially.
+    logger.critical(f"Critical Error: Failed to import plugins: {e}")
+    # Continue to allow partial failure handling in initialize_services if needed, 
+    # but likely will fail later.
     pass
-
-# Configure Logging
-# Create logs/system directory for main execution logs
-log_dir = os.path.join(project_root, 'logs', 'system')
-os.makedirs(log_dir, exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.handlers.TimedRotatingFileHandler(
-            os.path.join(log_dir, 'main_run.log'),
-            when='midnight',
-            interval=1,
-            backupCount=30,
-            encoding='utf-8'
-        )
-    ]
-)
-logger = logging.getLogger("Main")
 
 class WarehouseSystem:
     def __init__(self):
@@ -67,7 +51,11 @@ class WarehouseSystem:
 
     def ensure_model_exists(self):
         """Download MediaPipe EfficientDet model if not present."""
-        model_dir = os.path.join(current_dir, 'models')
+        model_dir = os.path.join(Config.PROJECT_ROOT, 'src', 'models')
+        # Handle if 'src' is not in path or different structure
+        if not os.path.exists(model_dir):
+             model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+        
         os.makedirs(model_dir, exist_ok=True)
         self.model_path = os.path.join(model_dir, 'efficientdet_lite0.tflite')
         
@@ -94,22 +82,19 @@ class WarehouseSystem:
         try:
             # 1. Asset Scanning (RFID)
             try:
-                # Re-import in case it failed earlier or was just created
-                from src.plugins.AssetScanning import AssetScanning
                 self.asset_scanning = AssetScanning()
             except Exception as e:
                 logger.error(f"AssetScanning initialization failed: {e}. Skipping asset tracking.")
+                logger.debug(traceback.format_exc())
                 self.asset_scanning = None
             
             # 2. Time Capture (Exit Camera)
-            from src.plugins.TimeCapture import TimeCapture
             self.time_capture = TimeCapture(
                 asset_scanner=self.asset_scanning, 
                 model_path=self.model_path
             )
             
             # 3. Face Capture (Entry Camera)
-            from src.plugins.FaceCapture import FaceCapture
             self.face_capture = FaceCapture(
                 model_path=self.model_path
             )
@@ -117,6 +102,7 @@ class WarehouseSystem:
             logger.info("All services initialized successfully.")
         except Exception as e:
             logger.critical(f"Service Initialization Failed: {e}")
+            logger.debug(traceback.format_exc())
             sys.exit(1)
 
     def start(self):
@@ -160,6 +146,7 @@ class WarehouseSystem:
 
         except Exception as e:
             logger.error(f"Runtime Error: {e}")
+            logger.debug(traceback.format_exc())
         finally:
             self.stop()
 

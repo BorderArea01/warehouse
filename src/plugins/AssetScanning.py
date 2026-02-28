@@ -17,38 +17,20 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any, Set
 
-# Configure logger for this module
-logger = logging.getLogger("AssetScanning")
-
-# Ensure project root is in sys.path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(current_dir))
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-# Try importing ToAgent
+# Local Imports
+from src.config import Config
 try:
     from src.plugins.ToAgent import ToAgent
 except ImportError:
-    # Fallback for direct execution
-    sys.path.append(os.path.join(project_root, 'src', 'plugins'))
-    try:
-        from ToAgent import ToAgent
-    except ImportError:
-        logger.warning("Could not import ToAgent. Server reporting will be disabled.")
-        ToAgent = None
+    ToAgent = None
+
+# Configure logger for this module
+logger = logging.getLogger("AssetScanning")
 
 # ================= Configuration & Constants =================
 
 # RFID Library Path
-# 1. Check project root lib (Preferred)
-LIB_PATH = os.path.join(project_root, 'lib', 'libModuleAPI.so')
-if not os.path.exists(LIB_PATH):
-    # 2. Check plugin local lib (Legacy)
-    LIB_PATH = os.path.join(current_dir, 'lib', 'libModuleAPI.so')
-    if not os.path.exists(LIB_PATH):
-        # 3. System fallback
-        LIB_PATH = '/usr/local/lib/libModuleAPI.so'
+LIB_PATH = Config.RFID_LIB_PATH
 
 # API Constants
 MT_OK_ERR = 0
@@ -56,7 +38,6 @@ MAXANTCNT = 16
 MAXEMBDATALEN = 128
 MAXEPCBYTESCNT = 62
 DEFAULT_DEPARTURE_TIMEOUT = 3.0  # Seconds to consider a tag gone
-DEFAULT_CONN_STR = "/dev/ttyACM2"
 
 # ================= CTypes Structures =================
 
@@ -171,8 +152,8 @@ class AssetScanning:
     Integrates with TimeCapture to analyze assets moved during a person's visit.
     """
 
-    def __init__(self, conn_str: str = DEFAULT_CONN_STR, departure_timeout: float = DEFAULT_DEPARTURE_TIMEOUT):
-        self.conn_str = conn_str
+    def __init__(self, conn_str: str = None, departure_timeout: float = DEFAULT_DEPARTURE_TIMEOUT):
+        self.conn_str = conn_str or Config.RFID_CONN_STR
         self.departure_timeout = departure_timeout
         
         self.reader = RfidReader()
@@ -183,7 +164,7 @@ class AssetScanning:
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
         
-        self.log_dir = os.path.join(project_root, 'logs', 'asset')
+        self.log_dir = os.path.join(Config.PROJECT_ROOT, 'logs', 'asset')
         os.makedirs(self.log_dir, exist_ok=True)
         
         self.to_agent = ToAgent(module_name="AssetScanning") if ToAgent else None

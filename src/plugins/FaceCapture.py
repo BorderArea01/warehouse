@@ -21,43 +21,24 @@ import threading
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List, Tuple
+from pathlib import Path
 
 # MediaPipe Imports
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-# Configure logger
-logger = logging.getLogger("FaceCapture")
-
-# Ensure project root is in sys.path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(current_dir))
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-# Try importing ToAgent and MinioUploader
+# Local Imports
+from src.config import Config
 try:
     from src.plugins.ToAgent import ToAgent
     from src.plugins.Uploader import MinioUploader
 except ImportError:
-    sys.path.append(os.path.join(project_root, 'src', 'plugins'))
-    try:
-        from ToAgent import ToAgent
-        from Uploader import MinioUploader
-    except ImportError:
-        logger.warning("Could not import ToAgent or MinioUploader. Server reporting may be disabled.")
-        ToAgent = None
-        MinioUploader = None
-from pathlib import Path
+    ToAgent = None
+    MinioUploader = None
 
-# ================= Configuration Constants =================
-
-FACE_API_URL = "http://192.168.11.24:8088/system/visitorRecord/recognizeFace"
-CONFIDENCE_THRESHOLD = 0.65  # Increased from 0.5 to reduce false positives
-MIN_DETECTION_DURATION = 0.6   # Increased from 0.25s to 0.6s to prevent glitch triggers
-MIN_FACE_AREA_RATIO = 0.08     # 8% of frame
-REPORT_INTERVAL = 1.0          # Seconds (Rate limit: max 1 request per second)
+# Configure logger
+logger = logging.getLogger("FaceCapture")
 
 # ================= Face Capture Service =================
 
@@ -67,7 +48,7 @@ class FaceCapture:
     """
 
     def __init__(self, model_path: str):
-        self.face_api_url = FACE_API_URL
+        self.face_api_url = Config.FACE_API_URL
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent(module_name="FaceCapture") if ToAgent else None
         self.uploader = MinioUploader() if MinioUploader else None
@@ -101,7 +82,7 @@ class FaceCapture:
             base_options = python.BaseOptions(model_asset_path=self.model_path)
             options = vision.ObjectDetectorOptions(
                 base_options=base_options,
-                score_threshold=CONFIDENCE_THRESHOLD,
+                score_threshold=Config.FACE_CONFIDENCE_THRESHOLD,
                 max_results=5,
                 category_allowlist=["person"]
             )
@@ -152,6 +133,11 @@ class FaceCapture:
         is_potential_entry = False
         tracking_timeout = 5.0
         last_scene_recognition_time = 0.0
+        
+        min_detection_duration = Config.FACE_MIN_DETECTION_DURATION
+        # min_face_area_ratio is not in config, using constant logic or hardcoded
+        min_face_area_ratio = 0.08
+        report_interval = 1.0
 
         try:
             while True:
@@ -164,11 +150,9 @@ class FaceCapture:
                 self._cleanup_cooldowns(current_time)
 
                 # MediaPipe Inference
-                # Convert to RGB
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
                 
-                # Detect
                 detection_result = self.detector.detect(mp_image)
                 detections = detection_result.detections
                 
@@ -177,8 +161,6 @@ class FaceCapture:
                 person_detected_now = False
 
                 for detection in detections:
-                    # Assuming category_allowlist="person" worked, all are persons.
-                    # Bounding box is in pixels: origin_x, origin_y, width, height
                     bbox = detection.bounding_box
                     x1 = int(bbox.origin_x)
                     y1 = int(bbox.origin_y)
@@ -189,15 +171,12 @@ class FaceCapture:
                     
                     score = detection.categories[0].score
 
-                    # Filter small objects
                     box_area = w_box * h_box
-                    if box_area / frame_area < MIN_FACE_AREA_RATIO:
-                        # logger.debug(f"Ignored small object: score={score:.2f}, ratio={box_area/frame_area:.3f}")
+                    if box_area / frame_area < min_face_area_ratio:
                         if not self.headless:
                             cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
                         continue
 
-                    # logger.info(f"Detected Person: score={score:.2f}, area_ratio={box_area/frame_area:.3f}")
                     person_detected_now = True
                     valid_detections.append((x1, y1, x2, y2, float(score)))
                     
@@ -216,7 +195,7 @@ class FaceCapture:
                             is_potential_entry = True
                             potential_start_time = current_time
                         else:
-                            if current_time - potential_start_time >= MIN_DETECTION_DURATION:
+                            if current_time - potential_start_time >= min_detection_duration:
                                 # Confirmed Entry
                                 is_tracking = True
                                 session_report_count = 0
@@ -227,7 +206,7 @@ class FaceCapture:
                                 session_report_count += 1
                     else:
                         # Tracking Phase
-                        if current_time - last_scene_recognition_time >= REPORT_INTERVAL:
+                        if current_time - last_scene_recognition_time >= report_interval:
                             self.process_frame_for_identities(frame, current_time, detections=valid_detections)
                             last_scene_recognition_time = current_time
                             session_report_count += 1
@@ -280,7 +259,6 @@ class FaceCapture:
                 x1, y1, x2, y2 = det[:4]
                 conf = det[4]
                 
-                # Padding
                 pad_x = int((x2 - x1) * 0.1)
                 pad_y = int((y2 - y1) * 0.1)
                 crop_x1 = max(0, x1 - pad_x)
@@ -337,18 +315,14 @@ class FaceCapture:
             image_url = "无"
             if self.uploader:
                 try:
-                    # Save temp file
                     temp_filename = f"temp_face_{int(current_time*1000)}.jpg"
-                    temp_path = Path(project_root) / "logs" / temp_filename
+                    temp_path = Path(Config.PROJECT_ROOT) / "logs" / temp_filename
                     cv2.imwrite(str(temp_path), img_to_send)
                     
-                    # Upload
                     upload_res = self.uploader.upload_file(temp_path)
                     if upload_res:
-                        # Use 'fileUrl' if available, otherwise 'url', otherwise full dict string
                         image_url = upload_res.get('fileUrl', upload_res.get('url', str(upload_res)))
                     
-                    # Clean up
                     if temp_path.exists():
                         temp_path.unlink()
                         
@@ -362,9 +336,6 @@ class FaceCapture:
             logger.error(f"Async Task Error: {e}")
 
     def _should_ignore_user(self, user_id: str, nick_name: str, user_type: str) -> bool:
-        # Debug: Print raw info to identify why a user might be ignored
-        # logger.info(f"Checking Identity: ID='{user_id}', Name='{nick_name}', Type='{user_type}'")
-
         if "游客" in user_type or "visitor" in user_type.lower():
             logger.warning(f"🚫 Blocked Visitor: {nick_name} (Access Denied)")
             return True
@@ -376,10 +347,7 @@ class FaceCapture:
         return False
 
     def _update_person_state(self, user_id, nick_name, current_time, face_result, bj_time, conf, image_url="无"):
-        # Determine cooldown based on user type/name
-        # If "visitor" or "游客" in name/type, use 1s, else 5s
         is_visitor = "游客" in nick_name or "visitor" in nick_name.lower()
-        # Also check user_type from face_result if available
         if not is_visitor and isinstance(face_result, dict):
             u_type = face_result.get("data", {}).get("userType", "")
             if "游客" in u_type or "visitor" in u_type.lower():
@@ -392,10 +360,8 @@ class FaceCapture:
         if current_time < state['cooldown_until']:
             return
 
-        # Check if user is already "in" (open record exists)
         if self._is_user_already_in(user_id):
             logger.info(f"User {nick_name} is already in warehouse (Open Record). Skipping new entry log.")
-            # Still apply cooldown so we don't spam checks
             state['cooldown_until'] = current_time + cooldown_duration
             self.identified_cooldowns[user_id] = state['cooldown_until']
             self.person_states[user_id] = state
@@ -409,54 +375,43 @@ class FaceCapture:
             "person_name": nick_name,
             "event_type": "realtime_identification",
             "confidence": float(conf),
-            "user_id": user_id,  # Store for easier lookup
+            "user_id": user_id,
             "image_url": image_url
         }
         
-        # Save and Send
         self.save_local_json(record)
         self.send_to_agent(record)
         
-        # Apply Cooldown
         state['cooldown_until'] = current_time + cooldown_duration
         self.identified_cooldowns[user_id] = state['cooldown_until']
         self.person_states[user_id] = state
 
     def _is_user_already_in(self, user_id: str) -> bool:
-        """
-        Check local JSONL to see if this user has an open record (no end_time).
-        """
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
-            log_dir = os.path.join(project_root, 'logs', 'person')
+            log_dir = os.path.join(Config.PROJECT_ROOT, 'logs', 'person')
             file_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
             
             if not os.path.exists(file_path):
                 return False
                 
-            # Read file backwards or just read all (assuming not huge for one day)
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
                 
             for line in reversed(lines):
                 try:
                     rec = json.loads(line)
-                    # Check if it matches user
                     rec_uid = rec.get("user_id")
                     if not rec_uid:
-                         # Fallback: extract from face_result if needed, but we saved user_id in new records
-                         # For backward compatibility with older records today:
                          face_res = rec.get("face_result", {})
                          if isinstance(face_res, dict) and face_res.get("code") == 200:
                              rec_uid = str(face_res.get("data", {}).get("userId", ""))
                     
                     if str(rec_uid) == str(user_id):
-                        # Found the latest record for this user
-                        # Check if it is closed
                         if rec.get("event_type") == "completed_visit" or rec.get("end_time"):
-                            return False # Last record is closed, so they are "out" (or re-entering)
+                            return False
                         else:
-                            return True # Last record is open, so they are "in"
+                            return True
                 except json.JSONDecodeError:
                     continue
             
@@ -494,13 +449,8 @@ class FaceCapture:
             conf = record.get('confidence', 0.95)
             img_url = record.get('image_url', '无')
             
-            # Since start_time is already formatted in local JSON, we use it directly
-            # Or try to parse it if needed, but it should be a string already
             start_str = start_t
-            
-            # Legacy support: if it's ISO format, convert it
             try:
-                # Check if it looks like ISO (contains T)
                 if 'T' in start_str:
                     s_dt = datetime.fromisoformat(start_str)
                     start_str = s_dt.strftime("%Y-%m-%d_%H:%M:%S")
@@ -533,7 +483,7 @@ class FaceCapture:
     def save_local_json(self, record: Dict[str, Any]):
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
-            log_dir = os.path.join(project_root, 'logs', 'person')
+            log_dir = os.path.join(Config.PROJECT_ROOT, 'logs', 'person')
             os.makedirs(log_dir, exist_ok=True)
             file_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
             
@@ -544,7 +494,5 @@ class FaceCapture:
             logger.error(f"Error saving local JSON: {e}")
 
 if __name__ == "__main__":
-    # For testing, need to provide model path manually or download it
-    # This is just for module execution
     logging.basicConfig(level=logging.INFO)
     print("Run via main.py to ensure model path is provided.")

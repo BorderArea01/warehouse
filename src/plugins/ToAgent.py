@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 import requests
 import logging
 import json
+from src.config import Config
 
 logger = logging.getLogger("ToAgent")
 
@@ -10,14 +11,14 @@ class ToAgent:
     def __init__(
         self,
         module_name: str = "UnknownModule",
-        employee_id: str = "2027303292526264322",
-        user_id: str = "748",
-        base_url: str = "http://192.168.11.24:8082/api/system/employee/webhook/invoke",
+        employee_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> None:
         self.module_name = module_name
-        self.base_url = base_url
-        self.employee_id = employee_id
-        self.user_id = user_id
+        self.base_url = base_url or Config.AGENT_BASE_URL
+        self.employee_id = employee_id or Config.EMPLOYEE_ID
+        self.user_id = user_id or Config.USER_ID
         
     def invoke(
         self,
