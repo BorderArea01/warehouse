@@ -1,7 +1,6 @@
 import os
 import sys
 import logging
-from urllib.parse import quote_plus
 from logging.handlers import TimedRotatingFileHandler
 
 # Ensure project root is in sys.path for imports if needed
@@ -39,30 +38,12 @@ class Config:
     LOG_DIR = os.path.join(PROJECT_ROOT, 'logs')
     
     # RTSP Configuration
-    RTSP_HOST = os.getenv('RTSP_HOST')
-    RTSP_PORT = os.getenv('RTSP_PORT')
-    RTSP_USER = os.getenv('RTSP_USER')
-    RTSP_PASSWORD = os.getenv('RTSP_PASSWORD')
-    RTSP_CHANNEL = os.getenv('RTSP_CHANNEL')
-    
-    # Construct RTSP URL (Encoding password)
-    # Note: Lzwc@2025. -> Lzwc%402025.
-    if RTSP_PASSWORD:
-        _password_encoded = quote_plus(RTSP_PASSWORD)
-        RTSP_URL_TIMECAPTURE = f"rtsp://{RTSP_USER}:{_password_encoded}@{RTSP_HOST}:{RTSP_PORT}/Streaming/Channels/{RTSP_CHANNEL}"
-        RTSP_URL_BACKUP_BASE = f"rtsp://{RTSP_USER}:{_password_encoded}@{RTSP_HOST}:{RTSP_PORT}/Streaming/tracks/{RTSP_CHANNEL}"
-    else:
-        RTSP_URL_TIMECAPTURE = None
-        RTSP_URL_BACKUP_BASE = None
+    # Now we expect full URLs in .env to allow easy domain replacement
+    RTSP_URL_TIMECAPTURE = os.getenv('RTSP_URL_TIMECAPTURE')
+    RTSP_URL_BACKUP_BASE = os.getenv('RTSP_URL_BACKUP_BASE')
 
     # Face Capture Configuration
-    FACE_API_HOST = os.getenv('FACE_API_HOST')
-    FACE_API_PORT = os.getenv('FACE_API_PORT')
     FACE_API_URL = os.getenv('FACE_API_URL')
-    if not FACE_API_URL and FACE_API_HOST and FACE_API_PORT:
-        FACE_API_URL = f"http://{FACE_API_HOST}:{FACE_API_PORT}/system/visitorRecord/recognizeFace"
-    
-    # Default values moved to .env
     FACE_CONFIDENCE_THRESHOLD = float(os.getenv('FACE_CONFIDENCE_THRESHOLD')) if os.getenv('FACE_CONFIDENCE_THRESHOLD') else 0.65
     FACE_MIN_DETECTION_DURATION = float(os.getenv('FACE_MIN_DETECTION_DURATION')) if os.getenv('FACE_MIN_DETECTION_DURATION') else 0.6
     
@@ -71,21 +52,12 @@ class Config:
     TIME_PERSON_TIMEOUT = float(os.getenv('TIME_PERSON_TIMEOUT')) if os.getenv('TIME_PERSON_TIMEOUT') else 5.0
 
     # Agent Configuration
-    AGENT_HOST = os.getenv('AGENT_HOST')
-    AGENT_PORT = os.getenv('AGENT_PORT')
     AGENT_BASE_URL = os.getenv('AGENT_BASE_URL')
-    if not AGENT_BASE_URL and AGENT_HOST and AGENT_PORT:
-        AGENT_BASE_URL = f"http://{AGENT_HOST}:{AGENT_PORT}/api/system/employee/webhook/invoke"
-    
     EMPLOYEE_ID = os.getenv('EMPLOYEE_ID')
     USER_ID = os.getenv('USER_ID')
 
     # MinIO Uploader Configuration
-    MINIO_HOST = os.getenv('MINIO_HOST')
-    MINIO_PORT = os.getenv('MINIO_PORT')
     MINIO_UPLOAD_URL = os.getenv('MINIO_UPLOAD_URL')
-    if not MINIO_UPLOAD_URL and MINIO_HOST and MINIO_PORT:
-        MINIO_UPLOAD_URL = f"http://{MINIO_HOST}:{MINIO_PORT}/api/system/file/upload"
 
     # Asset Scanning Configuration
     RFID_CONN_STR = os.getenv('RFID_CONN_STR')
@@ -97,8 +69,6 @@ class Config:
     
     # Feishu Configuration
     FEISHU_TOKEN = os.getenv('FEISHU_TOKEN')
-    # Default to paths relative to scripts dir if not absolute, or just keep as is
-    # The user provided absolute paths in the original code.
     FEISHU_EXCEL_FILE = os.getenv('FEISHU_EXCEL_FILE', os.path.join(PROJECT_ROOT, 'scripts', '资产主表，存储资产的基本信息和状态_线上_数据导出 (1).xlsx'))
     FEISHU_TEMP_DIR = os.getenv('FEISHU_TEMP_DIR', os.path.join(PROJECT_ROOT, 'scripts', 'temp_xlsx_extract'))
 
