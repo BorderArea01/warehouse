@@ -1,7 +1,8 @@
 images
 logs
-__pycache__
-yolov5n.pt
+
 venv
 *.xlsx
 *.xls
+
+__pycache__
