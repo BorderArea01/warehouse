@@ -25,7 +25,7 @@ except ImportError:
     ToAgent = None
 
 # Configure logger for this module
-logger = logging.getLogger("AssetScanning")
+logger = Config.get_logger("AssetScanning")
 
 # ================= Configuration & Constants =================
 
@@ -73,7 +73,7 @@ class RfidReader:
         self._setup_functions()
 
     def _load_library(self):
-        logger.info(f"Loading RFID dynamic library: {self.lib_path}")
+        logger.debug(f"Loading RFID dynamic library: {self.lib_path}")
         # Explicitly load libstdc++ to prevent undefined symbol errors
         try:
             ctypes.CDLL('libstdc++.so.6', mode=ctypes.RTLD_GLOBAL)
@@ -175,15 +175,24 @@ class AssetScanning:
 
     def start_monitoring(self):
         """Start the background monitoring thread."""
-        logger.info(f"Connecting to RFID Reader at {self.conn_str}...")
-        if self.reader.connect(self.conn_str):
-            logger.info("RFID Reader Connected Successfully.")
+        ports = ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyACM2']
+        connected = False
+
+        for port in ports:
+            logger.debug(f"Attempting to connect to RFID Reader at {port}...")
+            if self.reader.connect(port):
+                logger.info(f"RFID Reader Connected Successfully at {port}.")
+                self.conn_str = port
+                connected = True
+                break
+        
+        if connected:
             self.connected = True
             self.running = True
             self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
             self.monitor_thread.start()
         else:
-            logger.error("RFID Connection Failed!")
+            logger.error(f"RFID Connection Failed! Tried ports: {', '.join(ports)}")
             self.connected = False
 
     def stop_monitoring(self):
@@ -343,7 +352,20 @@ class AssetScanning:
                                 end_dt_val = end_dt_val.replace(tzinfo=start_dt.tzinfo)
 
                             # Check if this session ended during the visit window
-                            if start_dt <= end_dt_val <= analysis_end_dt:
+                            # Also check if session started during window
+                            is_within_window = False
+                            
+                            # Case 1: Session contained within window
+                            if start_dt <= start_dt_val and end_dt_val <= analysis_end_dt:
+                                is_within_window = True
+                            # Case 2: Session started before window but ended within window
+                            elif start_dt_val < start_dt and start_dt <= end_dt_val <= analysis_end_dt:
+                                is_within_window = True
+                            # Case 3: Session started within window but ends after (shouldn't happen with +5s wait, but possible)
+                            elif start_dt <= start_dt_val <= analysis_end_dt:
+                                is_within_window = True
+                                
+                            if is_within_window:
                                 if epc not in epc_occurrences:
                                     epc_occurrences[epc] = []
                                 
@@ -363,11 +385,25 @@ class AssetScanning:
             
             # Deduplication logic: Only report EPCs with ODD number of occurrences
             for epc, records in epc_occurrences.items():
+                # Portal Mode Logic:
+                # If an asset passes through the gate, it appears and disappears.
+                # 1. Appear (Online) -> Disappear (Offline) = 1 session (Count 1)
+                # 2. If it goes back and forth: Appear -> Disappear -> Appear -> Disappear = 2 sessions (Count 2)
+                #
+                # ODD number of sessions (1, 3, 5...) means it made a transition and didn't come back?
+                # Actually, "Portal Mode" usually means:
+                # - Detection means it is near the gate.
+                # - If it appears and disappears ONCE, it passed through.
+                # - If it appears, disappears, appears, disappears (2 times), maybe it just hovered?
+                #
+                # User request: "Detect appear and disappear ODD times -> Change happened."
+                # We simply count the number of completed sessions (online->offline pairs).
+                
                 if len(records) % 2 != 0:
                     epc_list.append(epc)
                 else:
-                    logger.info(f"Ignored EPC {epc} (detected {len(records)} times, cancelled out).")
-            
+                    logger.info(f"Ignored EPC {epc} (detected {len(records)} times, even count).")
+
             return epc_list
             
         except Exception as e:

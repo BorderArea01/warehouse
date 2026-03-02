@@ -25,9 +25,9 @@ def load_env_file(filepath):
                    (value.startswith("'") and value.endswith("'")):
                     value = value[1:-1]
                 
-                # Only set if not already in env (allow override)
-                if key not in os.environ:
-                    os.environ[key] = value
+                # Always set from .env to ensure file config is respected
+                # if key not in os.environ:
+                os.environ[key] = value
 
 # Load .env from project root
 load_env_file(os.path.join(PROJECT_ROOT, '.env'))
