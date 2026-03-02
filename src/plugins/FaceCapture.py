@@ -38,7 +38,7 @@ except ImportError:
     MinioUploader = None
 
 # Configure logger
-logger = logging.getLogger("FaceCapture")
+logger = Config.get_logger("FaceCapture")
 
 # ================= Face Capture Service =================
 
@@ -77,7 +77,7 @@ class FaceCapture:
         if self.detector:
             return
 
-        logger.info(f"Loading MediaPipe model from {self.model_path}...")
+        logger.debug(f"Loading MediaPipe model from {self.model_path}...")
         try:
             base_options = python.BaseOptions(model_asset_path=self.model_path)
             options = vision.ObjectDetectorOptions(
@@ -87,7 +87,7 @@ class FaceCapture:
                 category_allowlist=["person"]
             )
             self.detector = vision.ObjectDetector.create_from_options(options)
-            logger.info("MediaPipe Object Detector loaded successfully.")
+            logger.debug("MediaPipe Object Detector loaded successfully.")
         except Exception as e:
             logger.critical(f"Failed to load MediaPipe model: {e}")
             sys.exit(1)
@@ -115,7 +115,7 @@ class FaceCapture:
 
     def start_monitoring(self):
         """Start the main monitoring loop."""
-        logger.info("Starting FaceCapture Monitoring Service...")
+        logger.debug("Starting FaceCapture Monitoring Service...")
         
         if not self._initialize_camera():
             return
@@ -300,7 +300,7 @@ class FaceCapture:
                 logger.warning(f"API returned non-200 or invalid format: {result}")
 
             if self._should_ignore_user(user_id, nick_name, user_type):
-                logger.warning(f"Ignored user from API: id={user_id}, name={nick_name}, type={user_type}")
+                # logger.warning(f"Ignored user from API: id={user_id}, name={nick_name}, type={user_type}")
                 return
 
             with self.state_lock:
@@ -308,6 +308,18 @@ class FaceCapture:
             
             if in_cooldown:
                 return 
+
+            # Check visitor status
+            is_visitor = "游客" in nick_name or "visitor" in nick_name.lower() or "游客" in user_type or "visitor" in user_type.lower()
+            
+            if is_visitor:
+                # Terminal only, minimal output
+                print(f"[Visitor] Detected: {nick_name} ({user_id})")
+                # Skip normal logging and upload for visitors to keep logs clean
+                # Only update state to handle cooldown
+                with self.state_lock:
+                    self._update_person_state(user_id, nick_name, current_time, result, bj_time, conf, image_url="无")
+                return
 
             logger.info(f"Recognized: {nick_name} ({user_id})")
 
@@ -336,12 +348,12 @@ class FaceCapture:
             logger.error(f"Async Task Error: {e}")
 
     def _should_ignore_user(self, user_id: str, nick_name: str, user_type: str) -> bool:
-        if "游客" in user_type or "visitor" in user_type.lower():
-            logger.warning(f"🚫 Blocked Visitor: {nick_name} (Access Denied)")
-            return True
+        # if "游客" in user_type or "visitor" in user_type.lower():
+        #     logger.warning(f"🚫 Blocked Visitor: {nick_name} (Access Denied)")
+        #     return True
             
         if not user_id or user_id.lower() in ["unknown", "none", ""] or not nick_name:
-            logger.warning(f"🚫 Ignored Invalid Identity: ID='{user_id}', Name='{nick_name}'")
+            # logger.warning(f"🚫 Ignored Invalid Identity: ID='{user_id}', Name='{nick_name}'")
             return True
             
         return False
@@ -362,6 +374,13 @@ class FaceCapture:
 
         if self._is_user_already_in(user_id):
             logger.info(f"User {nick_name} is already in warehouse (Open Record). Skipping new entry log.")
+            state['cooldown_until'] = current_time + cooldown_duration
+            self.identified_cooldowns[user_id] = state['cooldown_until']
+            self.person_states[user_id] = state
+            return
+
+        if is_visitor:
+            # For visitors, we already printed in terminal. Just update cooldown and exit.
             state['cooldown_until'] = current_time + cooldown_duration
             self.identified_cooldowns[user_id] = state['cooldown_until']
             self.person_states[user_id] = state

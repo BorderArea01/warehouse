@@ -26,7 +26,7 @@
 | name | VARCHAR(255) | NOT NULL | 资产名称 |
 | user_id | BIGINT | | 持有者 ID |
 | class_id | BIGINT | FK | 分类维度 ID |
-| status | VARCHAR(32) | NOT NULL | 当前状态 |
+| status | BOOLEAN | NOT NULL | 当前状态 |
 | code_value | VARCHAR(128) | NOT NULL | 码值 (RFID/条码) |
 | image | VARCHAR(1024) | NOT NULL | 图片快照 URL |
 | purpose | VARCHAR(255) | | 用途 |
@@ -86,7 +86,6 @@
 | :--- | :--- | :--- | :--- |
 | confirm_id | BIGSERIAL | PK | 确认事件主键 (自增) |
 | asset_id | BIGINT | FK | 资产主键 |
-| user_id | BIGINT | | 用户主键 |
 | event_id | BIGINT | | 关联事件主键 |
 | event_type | BOOLEAN | NOT NULL | 出入库标识 (TRUE: 在库/入库, FALSE: 出库) |
 | status | VARCHAR(64) | | 确认状态 (完成、待确认、异常) |

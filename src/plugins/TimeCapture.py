@@ -34,7 +34,7 @@ except ImportError:
     ToAgent = None
 
 # Configure logger
-logger = logging.getLogger("TimeCapture")
+logger = Config.get_logger("TimeCapture")
 
 # ================= Time Capture Service =================
 
@@ -66,7 +66,7 @@ class TimeCapture:
         if self.detector:
             return
 
-        logger.info(f"Loading MediaPipe model from {self.model_path}...")
+        logger.debug(f"Loading MediaPipe model from {self.model_path}...")
         try:
             base_options = python.BaseOptions(model_asset_path=self.model_path)
             options = vision.ObjectDetectorOptions(
@@ -76,7 +76,7 @@ class TimeCapture:
                 category_allowlist=["person"]
             )
             self.detector = vision.ObjectDetector.create_from_options(options)
-            logger.info("MediaPipe Object Detector loaded successfully.")
+            logger.debug("MediaPipe Object Detector loaded successfully.")
         except Exception as e:
             logger.critical(f"Failed to load MediaPipe model: {e}")
             sys.exit(1)
@@ -92,7 +92,7 @@ class TimeCapture:
         self.running = True
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
-        logger.info("TimeCapture Monitoring started.")
+        logger.info("TimeCapture Service Started.")
 
     def stop_monitoring(self):
         """Stop the monitoring thread."""
@@ -103,6 +103,10 @@ class TimeCapture:
 
     def _monitor_loop(self):
         """Main loop to read RTSP stream and detect person presence."""
+        # Set OpenCV environment variables to force TCP (Stable like VLC)
+        # Removed 'nobuffer' to allow ffmpeg to smooth out network jitter
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+        
         cap = cv2.VideoCapture(self.rtsp_url)
         if not cap.isOpened():
             logger.error(f"Could not open RTSP stream: {self.rtsp_url}")
@@ -117,14 +121,41 @@ class TimeCapture:
         
         # State
         last_seen_time = time.time()
-        is_session_active = False  # Are we currently tracking a visit?
+
+        # Reader Thread Logic:
+        # We separate frame reading from processing to ensure the buffer is drained continuously.
+        # This prevents "old" frames from piling up while we are processing (inference).
+        # It also mimics VLC's behavior of just playing the stream smoothly.
+        
+        self._latest_frame = None
+        self._frame_lock = threading.Lock()
+        
+        def _read_frames():
+            while self.running and cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    # Signal disconnection?
+                    time.sleep(0.1)
+                    continue
+                with self._frame_lock:
+                    self._latest_frame = frame.copy()
+        
+        reader_thread = threading.Thread(target=_read_frames, daemon=True)
+        reader_thread.start()
 
         while self.running:
-            ret, frame = cap.read()
-            if not ret:
-                logger.warning("Stream disconnected. Reconnecting in 5s...")
-                time.sleep(5)
-                cap = cv2.VideoCapture(self.rtsp_url)
+            # Check if we have a frame
+            frame = None
+            with self._frame_lock:
+                if self._latest_frame is not None:
+                    frame = self._latest_frame
+                    self._latest_frame = None # Consume it
+            
+            if frame is None:
+                # No new frame yet, or stream issue
+                # Check if capture is still valid?
+                # For now just sleep and wait
+                time.sleep(0.05)
                 continue
 
             frame_count += 1
@@ -152,24 +183,34 @@ class TimeCapture:
             
             if seen_now:
                 last_seen_time = current_time
-                if not is_session_active:
-                    # New person arrived (or re-entered)
-                    is_session_active = True
-                    logger.info("Person Detected in Warehouse. Tracking session...")
+                # logger.debug("Person detected - keeping session open.")
             
             else:
-                if is_session_active:
-                    # Person was here, now gone. Check timeout.
-                    duration_gone = current_time - last_seen_time
-                    if duration_gone > self.person_timeout:
-                        # TIMEOUT REACHED -> EVENT END
-                        end_time = self.get_bj_time()
-                        logger.info(f"Person Left Warehouse (Timeout {self.person_timeout}s).")
-                        
-                        # Trigger Agent to update DB
+                # Person NOT seen. Check how long it has been empty.
+                duration_gone = current_time - last_seen_time
+                
+                if duration_gone > self.person_timeout:
+                    # TIMEOUT REACHED -> The room is effectively empty.
+                    # Attempt to close ANY open records found on disk.
+                    
+                    # We define "end_time" as "now" (or when we decided they were gone)
+                    # To avoid spamming, _update_local_json_end_time returns empty list if nothing changed.
+                    end_time = self.get_bj_time()
+                    
+                    try:
                         self.report_exit_event(end_time)
-                        
-                        is_session_active = False
+                    except Exception as e:
+                        logger.error(f"Error in report_exit_event: {e}")
+                    
+                    # Reset last_seen_time slightly to prevent hammering the file system 
+                    # every millisecond if it stays empty. 
+                    # But we want to keep checking in case a NEW record opens (e.g. ghost entry).
+                    # A small sleep in the loop handles CPU usage. 
+                    # We can also add a flag to say "we just closed records, wait a bit".
+                    
+                    # Update: report_exit_event will only log/send IF it actually closes something.
+                    # So it's safe to call, but efficient to throttle.
+                    time.sleep(1.0) 
 
             # Optional: Sleep to save CPU
             time.sleep(0.1)
@@ -186,7 +227,7 @@ class TimeCapture:
         closed_records = self._update_local_json_end_time(end_time_str)
         
         if not closed_records:
-            logger.info("No open records found to close.")
+            # logger.info("No open records found to close.")
             return
 
         for record in closed_records:
@@ -223,11 +264,14 @@ class TimeCapture:
         except Exception:
             pass
         
+        # Simply send the list of EPC strings
+        asset_changes_list = record.get('asset_changes', [])
+        
         query = (
             f"检测到人员已经离开：\n"
             f"时间：{end_str}；\n"
             f"区域：小仓库；\n"
-            f"资产变动情况：{json.dumps(record.get('asset_changes', []), ensure_ascii=False)}"
+            f"资产变动情况：{json.dumps(asset_changes_list, ensure_ascii=False)}"
         )
         
         try:
@@ -245,7 +289,7 @@ class TimeCapture:
         json_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
 
         if not os.path.exists(json_path):
-            logger.warning("Today's JSONL file not found.")
+            # logger.warning("Today's JSONL file not found.")
             return []
 
         closed_records_list = []

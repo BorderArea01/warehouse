@@ -70,11 +70,12 @@ class WarehouseSystem:
                 logger.critical(f"Failed to download model: {e}")
                 sys.exit(1)
         else:
-            logger.info(f"Using existing model at {self.model_path}")
+            # logger.info(f"Using existing model at {self.model_path}")
+            pass
 
     def initialize_services(self):
         """Initialize all plugin instances."""
-        logger.info("Initializing Warehouse Services...")
+        # logger.info("Initializing Warehouse Services...")
         
         # Ensure model exists
         self.ensure_model_exists()
@@ -99,7 +100,7 @@ class WarehouseSystem:
                 model_path=self.model_path
             )
             
-            logger.info("All services initialized successfully.")
+            # logger.info("All services initialized successfully.")
         except Exception as e:
             logger.critical(f"Service Initialization Failed: {e}")
             logger.debug(traceback.format_exc())
@@ -117,29 +118,26 @@ class WarehouseSystem:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         print("==========================================")
-        print("   Warehouse Monitoring System v2.0 (MediaPipe)")
-        print("   - FaceCapture   (Entry & ID)")
-        print("   - AssetScanning (RFID Tracking)")
-        print("   - TimeCapture   (Exit Monitoring)")
-        print("   - MinioUploader (Image Upload)")
+        print("   Warehouse Monitoring System v2.0")
+        print("   Status: Running")
         print("==========================================")
 
         try:
             # 1. Start Background Services
-            logger.info("Starting Background Services...")
+            # logger.info("Starting Background Services...")
             
             if self.asset_scanning:
-                logger.info("[1/2] Launching AssetScanning...")
+                # logger.info("[1/2] Launching AssetScanning...")
                 self.asset_scanning.start_monitoring()
             else:
-                logger.info("[1/2] AssetScanning skipped (not initialized).")
+                logger.info("AssetScanning skipped (not initialized).")
             
-            logger.info("[2/2] Launching TimeCapture...")
+            # logger.info("[2/2] Launching TimeCapture...")
             self.time_capture.start_monitoring()
 
             # 2. Start Foreground Service (Blocking)
-            logger.info("Starting Foreground Service (FaceCapture)...")
-            print("Press Ctrl+C to exit.")
+            # logger.info("Starting Foreground Service (FaceCapture)...")
+            print("System Ready. Press Ctrl+C to exit.")
             
             # This call blocks until user quits or error occurs
             self.face_capture.start_monitoring()

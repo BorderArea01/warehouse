@@ -5,7 +5,7 @@ import logging
 import json
 from src.config import Config
 
-logger = logging.getLogger("ToAgent")
+logger = Config.get_logger("ToAgent")
 
 class ToAgent:
     def __init__(

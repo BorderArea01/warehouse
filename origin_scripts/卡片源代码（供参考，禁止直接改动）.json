@@ -19,10 +19,46 @@
                 "tag": "form",
                 "elements": [
                     {
-                        "tag": "markdown",
-                        "content": "**<font color='blue-600'>确认单号:</font>** <font color='grey'>${order_number}</font>",
-                        "text_align": "left",
-                        "text_size": "normal"
+                        "tag": "column_set",
+                        "horizontal_spacing": "8px",
+                        "horizontal_align": "left",
+                        "columns": [
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [
+                                    {
+                                        "tag": "markdown",
+                                        "content": "**<font color='blue-600'>确认单号:</font>**",
+                                        "text_align": "left",
+                                        "text_size": "normal"
+                                    }
+                                ],
+                                "vertical_align": "top",
+                                "weight": 1
+                            },
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [
+                                    {
+                                        "tag": "div",
+                                        "text": {
+                                            "tag": "plain_text",
+                                            "content": "${order_number}",
+                                            "text_size": "normal_v2",
+                                            "text_align": "left",
+                                            "text_color": "default"
+                                        },
+                                        "margin": "0px 0px 0px 0px",
+                                        "element_id": "display_order_number"
+                                    }
+                                ],
+                                "vertical_align": "top",
+                                "weight": 1
+                            }
+                        ],
+                        "margin": "0px 0px 0px 0px"
                     },
                     {
                         "tag": "markdown",
