@@ -64,6 +64,13 @@ class FaceCapture:
         
         # Thread Pool
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+        self._inflight_lock = threading.Lock()
+        self._inflight_tasks = 0
+        self._max_inflight_tasks = 6
+        self._open_user_cache = set()
+        self._open_cache_last_refresh = 0.0
+        self._open_cache_refresh_interval = 5.0
+        self._open_cache_day = None
         
         # Resources
         self.cap = None
@@ -133,6 +140,8 @@ class FaceCapture:
         is_potential_entry = False
         tracking_timeout = 5.0
         last_scene_recognition_time = 0.0
+        read_fail_count = 0
+        last_reinit_time = 0.0
         
         min_detection_duration = Config.FACE_MIN_DETECTION_DURATION
         # min_face_area_ratio is not in config, using constant logic or hardcoded
@@ -141,97 +150,108 @@ class FaceCapture:
 
         try:
             while True:
-                ret, frame = self.cap.read()
-                if not ret:
-                    time.sleep(0.1)
-                    continue
-
-                current_time = time.time()
-                self._cleanup_cooldowns(current_time)
-
-                # MediaPipe Inference
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-                
-                detection_result = self.detector.detect(mp_image)
-                detections = detection_result.detections
-                
-                valid_detections = []
-                frame_area = float(frame.shape[0] * frame.shape[1])
-                person_detected_now = False
-
-                for detection in detections:
-                    bbox = detection.bounding_box
-                    x1 = int(bbox.origin_x)
-                    y1 = int(bbox.origin_y)
-                    w_box = int(bbox.width)
-                    h_box = int(bbox.height)
-                    x2 = x1 + w_box
-                    y2 = y1 + h_box
-                    
-                    score = detection.categories[0].score
-
-                    box_area = w_box * h_box
-                    if box_area / frame_area < min_face_area_ratio:
-                        if not self.headless:
-                            cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
+                try:
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        read_fail_count += 1
+                        now = time.time()
+                        if read_fail_count >= 30 and now - last_reinit_time >= 5.0:
+                            if self.cap:
+                                self.cap.release()
+                            self._initialize_camera()
+                            last_reinit_time = now
+                            read_fail_count = 0
+                        time.sleep(0.1)
                         continue
 
-                    person_detected_now = True
-                    valid_detections.append((x1, y1, x2, y2, float(score)))
-                    
-                    if not self.headless:
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        cv2.putText(frame, f"Person {score:.2f}", (x1, y1 - 10), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    read_fail_count = 0
+                    current_time = time.time()
+                    self._cleanup_cooldowns(current_time)
 
-                # --- State Machine Logic ---
-                if person_detected_now:
-                    last_seen_time = current_time
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
                     
-                    if not is_tracking:
-                        # Entry Phase
-                        if not is_potential_entry:
-                            is_potential_entry = True
-                            potential_start_time = current_time
+                    detection_result = self.detector.detect(mp_image)
+                    detections = detection_result.detections
+                    
+                    valid_detections = []
+                    frame_area = float(frame.shape[0] * frame.shape[1])
+                    person_detected_now = False
+
+                    for detection in detections:
+                        bbox = detection.bounding_box
+                        x1 = int(bbox.origin_x)
+                        y1 = int(bbox.origin_y)
+                        w_box = int(bbox.width)
+                        h_box = int(bbox.height)
+                        x2 = x1 + w_box
+                        y2 = y1 + h_box
+                        
+                        score = detection.categories[0].score
+
+                        box_area = w_box * h_box
+                        if box_area / frame_area < min_face_area_ratio:
+                            if not self.headless:
+                                cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
+                            continue
+
+                        person_detected_now = True
+                        valid_detections.append((x1, y1, x2, y2, float(score)))
+                        
+                        if not self.headless:
+                            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            cv2.putText(frame, f"Person {score:.2f}", (x1, y1 - 10), 
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+                    if person_detected_now:
+                        last_seen_time = current_time
+                        
+                        if not is_tracking:
+                            if not is_potential_entry:
+                                is_potential_entry = True
+                                potential_start_time = current_time
+                            else:
+                                if current_time - potential_start_time >= min_detection_duration:
+                                    is_tracking = True
+                                    session_report_count = 0
+                                    is_potential_entry = False
+                                    session_start_time = self.get_bj_time()
+                                    
+                                    self.process_frame_for_identities(frame, current_time, detections=valid_detections)
+                                    session_report_count += 1
                         else:
-                            if current_time - potential_start_time >= min_detection_duration:
-                                # Confirmed Entry
-                                is_tracking = True
-                                session_report_count = 0
-                                is_potential_entry = False
-                                session_start_time = self.get_bj_time()
-                                
+                            if current_time - last_scene_recognition_time >= report_interval:
                                 self.process_frame_for_identities(frame, current_time, detections=valid_detections)
+                                last_scene_recognition_time = current_time
                                 session_report_count += 1
                     else:
-                        # Tracking Phase
-                        if current_time - last_scene_recognition_time >= report_interval:
-                            self.process_frame_for_identities(frame, current_time, detections=valid_detections)
-                            last_scene_recognition_time = current_time
-                            session_report_count += 1
-                else:
-                    # No person detected
-                    if is_potential_entry:
-                        is_potential_entry = False
-                        
-                    if is_tracking:
-                        if current_time - last_seen_time > tracking_timeout:
-                            logger.info(f"Session ended. Started at {session_start_time}")
-                            is_tracking = False
+                        if is_potential_entry:
+                            is_potential_entry = False
+                            
+                        if is_tracking:
+                            if current_time - last_seen_time > tracking_timeout:
+                                logger.info(f"Session ended. Started at {session_start_time}")
+                                is_tracking = False
 
-                # UI Display
-                if not self.headless:
-                    self._draw_debug_info(frame, current_time)
-                    cv2.imshow('FaceCapture Monitor', frame)
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
+                    if not self.headless:
+                        self._draw_debug_info(frame, current_time)
+                        cv2.imshow('FaceCapture Monitor', frame)
+                        if cv2.waitKey(1) & 0xFF == ord('q'):
+                            break
+                except Exception as e:
+                    logger.error(f"Monitoring Loop Error: {e}")
+                    time.sleep(0.1)
                         
         except KeyboardInterrupt:
             logger.info("Stopping monitoring...")
         finally:
             if self.cap:
                 self.cap.release()
+            try:
+                self.executor.shutdown(wait=False)
+            except Exception:
+                pass
+            self.detector = None
             cv2.destroyAllWindows()
 
     def _cleanup_cooldowns(self, current_time: float):
@@ -275,6 +295,10 @@ class FaceCapture:
         logger.debug(f"Async processing {len(targets_to_process)} target(s)...")
 
         for img_idx, (img, conf) in enumerate(targets_to_process):
+            with self._inflight_lock:
+                if self._inflight_tasks >= self._max_inflight_tasks:
+                    continue
+                self._inflight_tasks += 1
             self.executor.submit(
                 self._async_recognize_task, img, current_time, bj_time, img_idx, conf
             )
@@ -328,7 +352,9 @@ class FaceCapture:
             if self.uploader:
                 try:
                     temp_filename = f"temp_face_{int(current_time*1000)}.jpg"
-                    temp_path = Path(Config.PROJECT_ROOT) / "logs" / temp_filename
+                    log_dir = Path(Config.PROJECT_ROOT) / "logs"
+                    log_dir.mkdir(parents=True, exist_ok=True)
+                    temp_path = log_dir / temp_filename
                     cv2.imwrite(str(temp_path), img_to_send)
                     
                     upload_res = self.uploader.upload_file(temp_path)
@@ -346,6 +372,9 @@ class FaceCapture:
 
         except Exception as e:
             logger.error(f"Async Task Error: {e}")
+        finally:
+            with self._inflight_lock:
+                self._inflight_tasks = max(0, self._inflight_tasks - 1)
 
     def _should_ignore_user(self, user_id: str, nick_name: str, user_type: str) -> bool:
         # if "游客" in user_type or "visitor" in user_type.lower():
@@ -407,37 +436,46 @@ class FaceCapture:
 
     def _is_user_already_in(self, user_id: str) -> bool:
         try:
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            log_dir = os.path.join(Config.PROJECT_ROOT, 'logs', 'person')
-            file_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
-            
-            if not os.path.exists(file_path):
-                return False
-                
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                
-            for line in reversed(lines):
-                try:
-                    rec = json.loads(line)
-                    rec_uid = rec.get("user_id")
-                    if not rec_uid:
-                         face_res = rec.get("face_result", {})
-                         if isinstance(face_res, dict) and face_res.get("code") == 200:
-                             rec_uid = str(face_res.get("data", {}).get("userId", ""))
-                    
-                    if str(rec_uid) == str(user_id):
-                        if rec.get("event_type") == "completed_visit" or rec.get("end_time"):
-                            return False
-                        else:
-                            return True
-                except json.JSONDecodeError:
-                    continue
-            
-            return False
+            self._refresh_open_user_cache()
+            return str(user_id) in self._open_user_cache
         except Exception as e:
             logger.error(f"Error checking open records: {e}")
             return False
+
+    def _refresh_open_user_cache(self):
+        now = time.time()
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        if self._open_cache_day != today_str:
+            self._open_user_cache = set()
+            self._open_cache_day = today_str
+            self._open_cache_last_refresh = 0.0
+        if now - self._open_cache_last_refresh < self._open_cache_refresh_interval:
+            return
+        self._open_cache_last_refresh = now
+        log_dir = os.path.join(Config.PROJECT_ROOT, 'logs', 'person')
+        file_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
+        if not os.path.exists(file_path):
+            self._open_user_cache = set()
+            return
+        open_map = {}
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rec_uid = rec.get("user_id")
+                if not rec_uid:
+                    face_res = rec.get("face_result", {})
+                    if isinstance(face_res, dict) and face_res.get("code") == 200:
+                        rec_uid = str(face_res.get("data", {}).get("userId", ""))
+                if not rec_uid:
+                    continue
+                if rec.get("event_type") == "completed_visit" or rec.get("end_time"):
+                    open_map[str(rec_uid)] = False
+                else:
+                    open_map[str(rec_uid)] = True
+        self._open_user_cache = {uid for uid, opened in open_map.items() if opened}
 
     def capture_and_recognize(self, frame, timestamp: datetime, suffix="") -> Optional[Dict[str, Any]]:
         try:
@@ -482,18 +520,29 @@ class FaceCapture:
                 data = face_res.get("data", {})
                 user_id = data.get("userId", "Unknown")
                 nick_name = data.get("nickName", "Unknown")
-                 
-            query = (
-                f"检测到人员进入：\n"
-                f"时间：{start_str}；\n"
-                f"区域：小仓库；\n"
-                f"device_id: 1；\n"
-                f"user_id：{user_id}；\n"
-                f"名称：{nick_name}；\n"
-                f"minio_url：{img_url}"
-            )
-            
-            self.to_agent.invoke(query=query)
+
+            api_url = "http://192.168.11.24:8088/open/workflow/execute"
+            headers = {
+                "X-API-Key": "wf_6356a9907849423ba0d3c5510c60f64a",
+                "User-Agent": "Apifox/1.0.0 (https://apifox.com)",
+                "Content-Type": "application/json",
+                "Host": "192.168.11.24:8088",
+                "Connection": "keep-alive"
+            }
+
+            inputs = {
+                "device_id": "1",
+                "zone": "小仓库",
+                "image_url": img_url,
+                "person_id": str(user_id)
+            }
+
+            payload = {
+                "workflowId": "2027306314434215938",
+                "inputs": inputs
+            }
+
+            requests.post(api_url, json=payload, headers=headers, timeout=10)
             
         except Exception as e:
             logger.error(f"Error sending to Agent: {e}")

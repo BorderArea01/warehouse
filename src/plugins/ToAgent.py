@@ -62,14 +62,14 @@ class ToAgent:
                 msg = data.get('msg', '') if isinstance(data, dict) else str(data)
                 
                 # Enhanced Log: Response
-                log_resp = (
-                    f"\n{COLOR_RES}{'='*30}\n"
-                    f"[POST] Module: {self.module_name}\n"
-                    f"Server Response (Status {response.status_code}): {msg}\n"
-                    f"Full Data: {json.dumps(data, ensure_ascii=False)}\n"
-                    f"{'='*30}{COLOR_RESET}"
-                )
-                logger.info(log_resp)
+                # log_resp = (
+                #     f"\n{COLOR_RES}{'='*30}\n"
+                #     f"[POST] Module: {self.module_name}\n"
+                #     f"Server Response (Status {response.status_code}): {msg}\n"
+                #     f"Full Data: {json.dumps(data, ensure_ascii=False)}\n"
+                #     f"{'='*30}{COLOR_RESET}"
+                # )
+                # logger.info(log_resp)
                 
             except ValueError:
                 data = response.text
