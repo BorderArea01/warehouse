@@ -95,6 +95,5 @@
 
 **索引 (Indexes)**:
 - `idx_assets_event_asset_id` (`asset_id`)
-- `idx_assets_event_user` (`user_id`)
 - `idx_assets_event_status` (`status`)
 - `idx_assets_event_id` (`event_id`)
