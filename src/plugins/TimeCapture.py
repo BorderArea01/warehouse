@@ -294,10 +294,43 @@ class TimeCapture:
             "workflowId": "2027307779508797442",
             "inputs": inputs
         }
+
+        # ANSI Colors
+        COLOR_REQ = "\033[96m"
+        COLOR_RES = "\033[94m"
+        COLOR_RESET = "\033[0m"
+
+        log_req = (
+            f"\n{COLOR_REQ}{'='*30}\n"
+            f"[发送] Module: TimeCapture\n"
+            f"Sending: {json.dumps(payload, ensure_ascii=False, indent=2)}\n"
+            f"{'='*30}{COLOR_RESET}"
+        )
+        logger.info(log_req)
+
         try:
-            # self.to_agent.invoke(query=query)
             resp = requests.post(api_url, json=payload, headers=headers, timeout=10)
-            logger.info(f"Workflow API Response : {resp.status_code} ")
+            
+            try:
+                resp_data = resp.json()
+                log_resp = (
+                    f"\n{COLOR_RES}{'='*30}\n"
+                    f"[返回] Module: TimeCapture\n"
+                    f"Status: {resp.status_code}\n"
+                    f"Response: {json.dumps(resp_data, ensure_ascii=False, indent=2)}\n"
+                    f"{'='*30}{COLOR_RESET}"
+                )
+                logger.info(log_resp)
+            except ValueError:
+                log_resp = (
+                    f"\n{COLOR_RES}{'='*30}\n"
+                    f"[返回] Module: TimeCapture\n"
+                    f"Status: {resp.status_code}\n"
+                    f"Response: {resp.text[:200]}...\n"
+                    f"{'='*30}{COLOR_RESET}"
+                )
+                logger.info(log_resp)
+
         except Exception as e:
             logger.error(f"Error invoking Workflow API: {e}")
 

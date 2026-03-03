@@ -41,7 +41,7 @@ class ToAgent:
 
         log_req = (
             f"\n{COLOR_REQ}{'='*30}\n"
-            f"[POST] Module: {self.module_name}\n"
+            f"[发送] Module: {self.module_name}\n"
             f"Sending: {query}\n"
             f"{'='*30}{COLOR_RESET}"
         )
@@ -62,21 +62,22 @@ class ToAgent:
                 msg = data.get('msg', '') if isinstance(data, dict) else str(data)
                 
                 # Enhanced Log: Response
-                # log_resp = (
-                #     f"\n{COLOR_RES}{'='*30}\n"
-                #     f"[POST] Module: {self.module_name}\n"
-                #     f"Server Response (Status {response.status_code}): {msg}\n"
-                #     f"Full Data: {json.dumps(data, ensure_ascii=False)}\n"
-                #     f"{'='*30}{COLOR_RESET}"
-                # )
-                # logger.info(log_resp)
+                log_resp = (
+                    f"\n{COLOR_RES}{'='*30}\n"
+                    f"[返回] Module: {self.module_name}\n"
+                    f"Status: {response.status_code}\n"
+                    f"Response: {json.dumps(data, ensure_ascii=False, indent=2)}\n"
+                    f"{'='*30}{COLOR_RESET}"
+                )
+                logger.info(log_resp)
                 
             except ValueError:
                 data = response.text
                 logger.info(
                     f"\n{COLOR_RES}{'='*30}\n"
-                    f"[POST] Module: {self.module_name}\n"
-                    f"Server Response (Status {response.status_code}): {data[:200]}...\n"
+                    f"[返回] Module: {self.module_name}\n"
+                    f"Status: {response.status_code}\n"
+                    f"Response: {data[:200]}...\n"
                     f"{'='*30}{COLOR_RESET}"
                 )
                 

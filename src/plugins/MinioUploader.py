@@ -48,7 +48,7 @@ class MinioUploader:
         # Log Request
         log_req = (
             f"\n{COLOR_REQ}{'='*30}\n"
-            f"[POST] Module: MinioUploader\n"
+            f"[发送] Module: MinioUploader\n"
             f"Uploading File: {file_path.name}\n"
             f"Size: {file_size_mb:.2f} MB\n"
             f"{'='*30}{COLOR_RESET}"
@@ -74,14 +74,14 @@ class MinioUploader:
         data = result.get("data") or {}
 
         # Log Response
-        # log_resp = (
-        #     f"\n{COLOR_RES}{'='*30}\n"
-        #     f"[POST] Module: MinioUploader\n"
-        #     f"Server Response (Status {resp.status_code}): {server_msg}\n"
-        #     f"Full Data: {json.dumps(result, ensure_ascii=False)}\n"
-        #     f"{'='*30}{COLOR_RESET}"
-        # )
-        # logger.info(log_resp)
+        log_resp = (
+            f"\n{COLOR_RES}{'='*30}\n"
+            f"[返回] Module: MinioUploader\n"
+            f"Status: {resp.status_code}\n"
+            f"Response: {json.dumps(result, ensure_ascii=False, indent=2)}\n"
+            f"{'='*30}{COLOR_RESET}"
+        )
+        logger.info(log_resp)
 
         if server_code != 200:
             logger.error("【错误】上传失败!")

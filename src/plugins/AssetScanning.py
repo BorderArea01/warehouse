@@ -170,7 +170,7 @@ class AssetScanning:
         self.to_agent = ToAgent(module_name="AssetScanning") if ToAgent else None
 
     def _format_time(self, dt_obj: datetime) -> str:
-        """Format datetime as requested: YYYY-MM-DD_HH:MM:SS"""
+        """Format datetime as requested: YYYY-MM-DD HH:MM:SS"""
         return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
 
     def start_monitoring(self):
