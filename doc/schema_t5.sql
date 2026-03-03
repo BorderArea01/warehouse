@@ -1,5 +1,5 @@
 -- 数据库架构脚本 (Database Schema Script)
--- Generated based on doc/sql.md
+-- Generated based on doc/sql_t5.md
 
 -- 1. 资产分类 (assets_category)
 CREATE TABLE IF NOT EXISTS assets_category (
@@ -11,14 +11,12 @@ CREATE TABLE IF NOT EXISTS assets_category (
 
 CREATE INDEX IF NOT EXISTS idx_assets_category_class ON assets_category(asset_class);
 CREATE INDEX IF NOT EXISTS idx_assets_category_parent ON assets_category(parent_id);
-
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_parent_class 
- ON assets_category (asset_class) 
- WHERE parent_id IS NULL; 
- 
- CREATE UNIQUE INDEX IF NOT EXISTS uniq_child_class 
- ON assets_category (parent_id, asset_class) 
- WHERE parent_id IS NOT NULL;
+    ON assets_category (asset_class) 
+    WHERE parent_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_child_class 
+    ON assets_category (parent_id, asset_class) 
+    WHERE parent_id IS NOT NULL;
 
 -- 2. 资产主数据 (assets)
 CREATE TABLE IF NOT EXISTS assets (
@@ -26,7 +24,7 @@ CREATE TABLE IF NOT EXISTS assets (
     name VARCHAR(255) NOT NULL,
     user_id BIGINT,
     class_id BIGINT,
-    status VARCHAR(32) NOT NULL,
+    status BOOLEAN NOT NULL,
     code_value VARCHAR(128) NOT NULL,
     image VARCHAR(1024) NOT NULL,
     purpose VARCHAR(255),
@@ -72,9 +70,8 @@ CREATE INDEX IF NOT EXISTS idx_event_set_start_time ON event_set(start_time);
 CREATE TABLE IF NOT EXISTS assets_event (
     confirm_id BIGSERIAL PRIMARY KEY,
     asset_id BIGINT,
-    user_id BIGINT,
     event_id BIGINT,
-    event_type BOOLEAN NOT NULL, -- TRUE: In/Stock, FALSE: Out
+    event_type BOOLEAN NOT NULL,
     status VARCHAR(64),
     zone VARCHAR(64),
     remark VARCHAR(64),
@@ -83,6 +80,5 @@ CREATE TABLE IF NOT EXISTS assets_event (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assets_event_asset_id ON assets_event(asset_id);
-CREATE INDEX IF NOT EXISTS idx_assets_event_user ON assets_event(user_id);
 CREATE INDEX IF NOT EXISTS idx_assets_event_status ON assets_event(status);
 CREATE INDEX IF NOT EXISTS idx_assets_event_id ON assets_event(event_id);

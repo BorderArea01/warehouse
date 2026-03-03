@@ -47,9 +47,9 @@ class Config:
     FACE_CONFIDENCE_THRESHOLD = float(os.getenv('FACE_CONFIDENCE_THRESHOLD')) if os.getenv('FACE_CONFIDENCE_THRESHOLD') else 0.65
     FACE_MIN_DETECTION_DURATION = float(os.getenv('FACE_MIN_DETECTION_DURATION')) if os.getenv('FACE_MIN_DETECTION_DURATION') else 0.6
     
-    # Time Capture Configuration
+    # Time Capture
     TIME_CONFIDENCE_THRESHOLD = float(os.getenv('TIME_CONFIDENCE_THRESHOLD')) if os.getenv('TIME_CONFIDENCE_THRESHOLD') else 0.6
-    TIME_PERSON_TIMEOUT = float(os.getenv('TIME_PERSON_TIMEOUT')) if os.getenv('TIME_PERSON_TIMEOUT') else 5.0
+    TIME_PERSON_TIMEOUT = float(os.getenv('TIME_PERSON_TIMEOUT')) if os.getenv('TIME_PERSON_TIMEOUT') else 15.0
 
     # Agent Configuration
     AGENT_BASE_URL = os.getenv('AGENT_BASE_URL')

@@ -389,7 +389,7 @@ class FaceCapture:
         logger.info(f"Reporting Entry: {nick_name} (Cooldown: {cooldown_duration}s)")
         
         record = {
-            "start_time": bj_time.strftime("%Y-%m-%d_%H:%M:%S"),
+            "start_time": bj_time.strftime("%Y-%m-%d %H:%M:%S"),
             "face_result": face_result,
             "person_name": nick_name,
             "event_type": "realtime_identification",
@@ -472,7 +472,7 @@ class FaceCapture:
             try:
                 if 'T' in start_str:
                     s_dt = datetime.fromisoformat(start_str)
-                    start_str = s_dt.strftime("%Y-%m-%d_%H:%M:%S")
+                    start_str = s_dt.strftime("%Y-%m-%d %H:%M:%S")
             except (ValueError, TypeError):
                 pass
                 
@@ -493,7 +493,6 @@ class FaceCapture:
                 f"minio_url：{img_url}"
             )
             
-            logger.info(f"Sending Entry Event to Agent: {query}")
             self.to_agent.invoke(query=query)
             
         except Exception as e:

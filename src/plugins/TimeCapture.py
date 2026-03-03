@@ -221,7 +221,7 @@ class TimeCapture:
         """
         Handle exit event: update local logs, trigger asset analysis, and report to agent.
         """
-        end_time_str = end_time.strftime("%Y-%m-%d_%H:%M:%S")
+        end_time_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
         
         # 1. Update Local File and Get Full Records
         closed_records = self._update_local_json_end_time(end_time_str)
@@ -260,7 +260,7 @@ class TimeCapture:
         try:
              if 'T' in str(end_str):
                  e_dt = datetime.fromisoformat(end_str)
-                 end_str = e_dt.strftime("%Y-%m-%d_%H:%M:%S")
+                 end_str = e_dt.strftime("%Y-%m-%d %H:%M:%S")
         except Exception:
             pass
         
@@ -316,12 +316,12 @@ class TimeCapture:
                             if 'T' in start_time_val:
                                 start_dt = datetime.fromisoformat(start_time_val)
                             else:
-                                start_dt = datetime.strptime(start_time_val, "%Y-%m-%d_%H:%M:%S")
+                                start_dt = datetime.strptime(start_time_val, "%Y-%m-%d %H:%M:%S")
                                 
                             if 'T' in end_time_str:
                                 end_dt = datetime.fromisoformat(end_time_str)
                             else:
-                                end_dt = datetime.strptime(end_time_str, "%Y-%m-%d_%H:%M:%S")
+                                end_dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
                                 
                             record['duration_seconds'] = (end_dt - start_dt).total_seconds()
                         except Exception:

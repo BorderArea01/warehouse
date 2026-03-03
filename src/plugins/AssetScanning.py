@@ -171,7 +171,7 @@ class AssetScanning:
 
     def _format_time(self, dt_obj: datetime) -> str:
         """Format datetime as requested: YYYY-MM-DD_HH:MM:SS"""
-        return dt_obj.strftime("%Y-%m-%d_%H:%M:%S")
+        return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
 
     def start_monitoring(self):
         """Start the background monitoring thread."""
@@ -293,13 +293,13 @@ class AssetScanning:
             if 'T' in start_time_iso:
                 start_dt = datetime.fromisoformat(start_time_iso)
             else:
-                start_dt = datetime.strptime(start_time_iso, "%Y-%m-%d_%H:%M:%S")
+                start_dt = datetime.strptime(start_time_iso, "%Y-%m-%d %H:%M:%S")
                 
             # Handle both ISO and custom format for end_time
             if 'T' in end_time_iso:
                 end_dt = datetime.fromisoformat(end_time_iso)
             else:
-                end_dt = datetime.strptime(end_time_iso, "%Y-%m-%d_%H:%M:%S")
+                end_dt = datetime.strptime(end_time_iso, "%Y-%m-%d %H:%M:%S")
                 
             analysis_end_dt = end_dt + timedelta(seconds=5)
             
@@ -341,8 +341,8 @@ class AssetScanning:
                                 start_str = event_time_str 
                             
                             try:
-                                end_dt_val = datetime.strptime(event_time_str, "%Y-%m-%d_%H:%M:%S")
-                                start_dt_val = datetime.strptime(start_str, "%Y-%m-%d_%H:%M:%S")
+                                end_dt_val = datetime.strptime(event_time_str, "%Y-%m-%d %H:%M:%S")
+                                start_dt_val = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
                                 duration = int((end_dt_val - start_dt_val).total_seconds() * 1000)
                             except ValueError:
                                 continue
@@ -383,6 +383,37 @@ class AssetScanning:
                     except (ValueError, KeyError, json.JSONDecodeError):
                         continue
             
+            # 4. Handle remaining pending sessions (Online without Offline)
+            # If an asset appeared during the visit window and is still "Online", it counts as an arrival.
+            for epc, start_str in pending_sessions.items():
+                try:
+                    # Parse start time
+                    if 'T' in start_str:
+                         start_dt_val = datetime.fromisoformat(start_str)
+                    else:
+                         start_dt_val = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
+                    
+                    # Make timezone aware if needed
+                    if start_dt_val.tzinfo is None and start_dt.tzinfo is not None:
+                        start_dt_val = start_dt_val.replace(tzinfo=start_dt.tzinfo)
+                    
+                    # If it appeared AFTER the visit started (or during the window), count it.
+                    # Note: If it appeared BEFORE the visit started, it was already there, so no change relative to "being there".
+                    if start_dt_val >= start_dt and start_dt_val <= analysis_end_dt:
+                        if epc not in epc_occurrences:
+                            epc_occurrences[epc] = []
+                        
+                        epc_occurrences[epc].append({
+                            'epc': epc,
+                            'start_ts': start_str,
+                            'end_ts': None, # Still online
+                            'duration_ms': -1
+                        })
+                        logger.debug(f"EPC {epc} is still online (started {start_str}), counting as session.")
+                except Exception as e:
+                    logger.warning(f"Error processing pending session for {epc}: {e}")
+                    continue
+
             # Deduplication logic: Only report EPCs with ODD number of occurrences
             for epc, records in epc_occurrences.items():
                 # Portal Mode Logic:
