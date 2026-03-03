@@ -280,13 +280,13 @@ class AssetScanning:
 
     def get_asset_changes(self, start_time_iso: str, end_time_iso: str) -> List[str]:
         """
-        Analyze asset changes between start and end times (plus 5 seconds buffer) and return the list.
+        Analyze asset changes between start and end times (plus 8 seconds buffer) and return the list.
         This is a synchronous blocking call.
         """
-        logger.info(f"Waiting 5 seconds for asset state to stabilize...")
-        time.sleep(5)
+        logger.info(f"Waiting 8 seconds for asset state to stabilize...")
+        time.sleep(8)
         
-        logger.info(f"Analyzing asset changes between {start_time_iso} and {end_time_iso} (+5s)...")
+        logger.info(f"Analyzing asset changes between {start_time_iso} and {end_time_iso} (+8s)...")
         
         try:
             # Handle both ISO and custom format for start_time
@@ -301,7 +301,7 @@ class AssetScanning:
             else:
                 end_dt = datetime.strptime(end_time_iso, "%Y-%m-%d %H:%M:%S")
                 
-            analysis_end_dt = end_dt + timedelta(seconds=5)
+            analysis_end_dt = end_dt + timedelta(seconds=8)
             
             # Locate log file (assuming same day for simplicity)
             today_str = start_dt.strftime("%Y-%m-%d")
@@ -361,8 +361,11 @@ class AssetScanning:
                             # Case 2: Session started before window but ended within window
                             elif start_dt_val < start_dt and start_dt <= end_dt_val <= analysis_end_dt:
                                 is_within_window = True
-                            # Case 3: Session started within window but ends after (shouldn't happen with +5s wait, but possible)
+                            # Case 3: Session started within window but ends after (shouldn't happen with +8s wait, but possible)
                             elif start_dt <= start_dt_val <= analysis_end_dt:
+                                is_within_window = True
+                            # Case 4: Session covers the entire window (Started before, Ended after)
+                            elif start_dt_val < start_dt and end_dt_val > analysis_end_dt:
                                 is_within_window = True
                                 
                             if is_within_window:
@@ -401,39 +404,83 @@ class AssetScanning:
                     # Note: If it appeared BEFORE the visit started, it was already there, so no change relative to "being there".
                     if start_dt_val >= start_dt and start_dt_val <= analysis_end_dt:
                         if epc not in epc_occurrences:
-                            epc_occurrences[epc] = []
-                        
+                             epc_occurrences[epc] = []
+                         
                         epc_occurrences[epc].append({
-                            'epc': epc,
-                            'start_ts': start_str,
-                            'end_ts': None, # Still online
-                            'duration_ms': -1
-                        })
+                             'epc': epc,
+                             'start_ts': start_str,
+                             'end_ts': None, # Still online
+                             'duration_ms': -1
+                         })
                         logger.debug(f"EPC {epc} is still online (started {start_str}), counting as session.")
                 except Exception as e:
                     logger.warning(f"Error processing pending session for {epc}: {e}")
                     continue
 
-            # Deduplication logic: Only report EPCs with ODD number of occurrences
+            # Deduplication logic: Use time-based merging (Debounce)
+            # This handles signal jitter (split sessions) and detects ANY valid movement.
+            
             for epc, records in epc_occurrences.items():
-                # Portal Mode Logic:
-                # If an asset passes through the gate, it appears and disappears.
-                # 1. Appear (Online) -> Disappear (Offline) = 1 session (Count 1)
-                # 2. If it goes back and forth: Appear -> Disappear -> Appear -> Disappear = 2 sessions (Count 2)
-                #
-                # ODD number of sessions (1, 3, 5...) means it made a transition and didn't come back?
-                # Actually, "Portal Mode" usually means:
-                # - Detection means it is near the gate.
-                # - If it appears and disappears ONCE, it passed through.
-                # - If it appears, disappears, appears, disappears (2 times), maybe it just hovered?
-                #
-                # User request: "Detect appear and disappear ODD times -> Change happened."
-                # We simply count the number of completed sessions (online->offline pairs).
+                if not records:
+                    continue
                 
-                if len(records) % 2 != 0:
+                # Sort by start time
+                records.sort(key=lambda x: x['start_ts'])
+                
+                merged_sessions = []
+                if not records:
+                    continue
+                    
+                # 1. Merge overlapping or close sessions (Gap < 2 seconds)
+                current_session = records[0]
+                
+                for i in range(1, len(records)):
+                    next_session = records[i]
+                    
+                    # Parse times for comparison
+                    try:
+                        # Helper to get datetime object from session dict
+                        def get_dt(t_str):
+                            if not t_str: return None
+                            if 'T' in t_str: return datetime.fromisoformat(t_str)
+                            return datetime.strptime(t_str, "%Y-%m-%d %H:%M:%S")
+
+                        curr_end = get_dt(current_session['end_ts'])
+                        next_start = get_dt(next_session['start_ts'])
+                        
+                        if curr_end and next_start:
+                            # Calculate gap in seconds
+                            gap = (next_start - curr_end).total_seconds()
+                            
+                            if gap < 2.0: # 2 seconds threshold
+                                # Merge: extend end time and duration
+                                current_session['end_ts'] = next_session['end_ts']
+                                if current_session['duration_ms'] != -1 and next_session['duration_ms'] != -1:
+                                    current_session['duration_ms'] += next_session['duration_ms'] + (gap * 1000)
+                                elif next_session['duration_ms'] == -1:
+                                    current_session['duration_ms'] = -1 # Becomes ongoing
+                                continue
+                    except Exception as e:
+                        logger.warning(f"Error merging sessions for {epc}: {e}")
+                    
+                    # If not merged, push current and start new
+                    merged_sessions.append(current_session)
+                    current_session = next_session
+                
+                merged_sessions.append(current_session)
+                
+                # 2. Filter noise (Duration < 0.5s)
+                # Exception: ongoing sessions (-1) are always valid
+                valid_sessions = []
+                for s in merged_sessions:
+                    if s['duration_ms'] == -1 or s['duration_ms'] >= 500:
+                        valid_sessions.append(s)
+                
+                if valid_sessions:
                     epc_list.append(epc)
+                    logger.info(f"Detected change for {epc}: {len(valid_sessions)} valid session(s).")
                 else:
-                    logger.info(f"Ignored EPC {epc} (detected {len(records)} times, even count).")
+                    logger.debug(f"Ignored noise for {epc} (all sessions too short).")
 
             return epc_list
             

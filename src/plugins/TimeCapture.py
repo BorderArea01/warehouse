@@ -15,6 +15,7 @@ import time
 import os
 import sys
 import threading
+import requests
 import json
 import logging
 from datetime import datetime, timezone, timedelta
@@ -202,14 +203,11 @@ class TimeCapture:
                     except Exception as e:
                         logger.error(f"Error in report_exit_event: {e}")
                     
-                    # Reset last_seen_time slightly to prevent hammering the file system 
-                    # every millisecond if it stays empty. 
-                    # But we want to keep checking in case a NEW record opens (e.g. ghost entry).
-                    # A small sleep in the loop handles CPU usage. 
-                    # We can also add a flag to say "we just closed records, wait a bit".
+                    # Reset last_seen_time to NOW to prevent re-triggering immediately.
+                    # This ensures we wait for another full timeout period or new person detection.
+                    last_seen_time = current_time 
                     
-                    # Update: report_exit_event will only log/send IF it actually closes something.
-                    # So it's safe to call, but efficient to throttle.
+                    # Also sleep a bit to be safe
                     time.sleep(1.0) 
 
             # Optional: Sleep to save CPU
@@ -267,17 +265,41 @@ class TimeCapture:
         # Simply send the list of EPC strings
         asset_changes_list = record.get('asset_changes', [])
         
-        query = (
-            f"检测到人员已经离开：\n"
-            f"时间：{end_str}；\n"
-            f"区域：小仓库；\n"
-            f"资产变动情况：{json.dumps(asset_changes_list, ensure_ascii=False)}"
-        )
+        # query = (
+        #     f"生成事件集合\n"
+        #     f"时间：{end_str}；\n"
+        #     f"区域：小仓库；\n"
+        #     f"资产变动情况：{json.dumps(asset_changes_list, ensure_ascii=False)}"
+        # )
+        api_url = "http://192.168.11.24:8088/open/workflow/execute"
+        headers = {
+            "X-API-Key": "wf_bf4e77a054364d449618ef7bd7dbe0ac",
+            "User-Agent": "Apifox/1.0.0 (https://apifox.com)",
+            "Content-Type": "application/json",
+            "Host": "192.168.11.24:8088",
+            "Connection": "keep-alive"
+        }
         
+        inputs = {
+            "time": str(end_str),
+            "zone": "小仓库"
+        }
+        
+        # Only add asset_list if there are changes
+        if asset_changes_list:
+            # Join list into a comma-separated string: "EPC1,EPC2"
+            inputs["asset_list"] = ",".join(str(epc) for epc in asset_changes_list)
+            
+        payload = {
+            "workflowId": "2027307779508797442",
+            "inputs": inputs
+        }
         try:
-            self.to_agent.invoke(query=query)
+            # self.to_agent.invoke(query=query)
+            resp = requests.post(api_url, json=payload, headers=headers, timeout=10)
+            logger.info(f"Workflow API Response : {resp.status_code} ")
         except Exception as e:
-            logger.error(f"Error invoking Agent: {e}")
+            logger.error(f"Error invoking Workflow API: {e}")
 
     def _update_local_json_end_time(self, end_time_str: str) -> List[Dict[str, Any]]:
         """
