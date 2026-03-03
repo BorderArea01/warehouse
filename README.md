@@ -178,7 +178,7 @@ sequenceDiagram
 
 ## 环境要求 (Requirements)
 *   Python 3.8+
-*   依赖库：`mediapipe`, `opencv-python`, `requests`, `numpy` 等。
+*   Python 依赖以 `requirements.txt` 为准；运行视觉模块还需 `mediapipe`、`opencv-python`、`numpy`。
 *   硬件：
     *   树莓派 Pi 5 或更高性能工控机（Ubuntu24.04）。
     *   USB/CSI 摄像头（用于人脸抓拍）。
@@ -186,9 +186,10 @@ sequenceDiagram
     *   串口 RFID 读写器（支持 moduleAPI）。
 
 ## 辅助工具 (Helper Scripts)
-*   `scripts/test_rfid_web.py`: 启动一个 Web 服务器，用于局域网内手机远程测试 RFID 识别范围和蜂鸣器。
-*   `scripts/fix_firewall.sh`: 自动配置 UFW 防火墙以允许 Web 服务端口 (8000)。
-*   `scripts/verify_env.py`: 环境自检脚本，检查依赖库和 RFID 驱动是否正常。
+*   `origin_scripts/feishu_longconnect.py`: 飞书长链接示例。
+*   `origin_scripts/feishu_img2path.py`: 飞书图片上传与路径转换示例。
+*   `origin_scripts/send_test_card.py`: 飞书卡片消息测试脚本。
+*   `origin_scripts/vedio_backup.py`: 录像备份脚本参考。
 
 ## 快速开始 (Quick Start)
 
@@ -199,17 +200,40 @@ sudo apt update && sudo apt install -y python3-pip python3-opencv
 
 # 2. 安装 Python 依赖
 pip install -r requirements.txt --break-system-packages
-# 或
-python3 -m pip install mediapipe requests opencv-python-headless --break-system-packages
+python3 -m pip install mediapipe opencv-python numpy --break-system-packages
 ```
 
-### 2. 运行系统
+### 2. 配置环境
+编辑项目根目录 `.env`，至少配置以下关键项：
+
+```
+RTSP_URL_TIMECAPTURE=
+FACE_API_URL=
+AGENT_BASE_URL=
+EMPLOYEE_ID=
+USER_ID=
+MINIO_UPLOAD_URL=
+RFID_CONN_STR=
+```
+
+可选项：
+```
+RTSP_URL_BACKUP_BASE=
+FACE_CONFIDENCE_THRESHOLD=
+FACE_MIN_DETECTION_DURATION=
+TIME_CONFIDENCE_THRESHOLD=
+TIME_PERSON_TIMEOUT=
+RFID_LIB_PATH=
+HEADLESS=
+```
+
+### 3. 运行系统
 ```bash
 # 必须在项目根目录下运行
 python src/main.py
 ```
 
-### 3. 运行模式
+### 4. 运行模式
 启动后，系统将自动加载以下服务：
 *   **AssetScanning**: 后台线程，持续盘点 RFID 标签。
 *   **TimeCapture**: 后台线程，监控 RTSP 视频流。
@@ -218,32 +242,32 @@ python src/main.py
 ## 目录结构 (Directory Structure)
 ```
 warehouse/
+├── lib/                        # RFID 动态库 (libModuleAPI.so)
+├── origin_scripts/             # 历史/参考脚本
 ├── src/
+│   ├── models/                 # MediaPipe 模型目录
 │   ├── main.py                 # 主程序入口，负责服务编排
 │   ├── plugins/                # 功能插件模块
 │   │   ├── FaceCapture.py      # 入口人脸抓拍模块
 │   │   ├── TimeCapture.py      # 出口离场监控模块
 │   │   ├── AssetScanning.py    # RFID 资产追踪模块
 │   │   ├── ToAgent.py          # 后端通信接口
-│   │   ├── Uploader.py         # MinIO 文件上传模块
-│   │   ├── VideoBackup.py      # 录像回放下载工具
-│   │   └── lib/                # 第三方动态库 (libModuleAPI.so)
-│   └── utils/                  # 通用工具类
-├── logs/                       # 日志目录
-│   ├── system/                 # 系统运行日志 (main_run.log)
-│   ├── person/                 # 人员进出记录 (JSONL)
-│   └── asset/                  # 资产变动记录 (JSONL)
+│   │   └── MinioUploader.py    # MinIO 文件上传模块
+│   └── config.py               # 配置与日志初始化
 ├── doc/                        # 项目文档
-│   └── config.md               # 详细配置与逻辑说明
+│   ├── design.md               # 详细流程与逻辑说明
+│   └── RFID_mainfunc.md        # RFID 动态库说明
 └── requirements.txt            # 项目依赖
 ```
 
 ## 配置说明 (Configuration)
-主要配置项位于各插件源码顶部的常量定义中：
+主要配置统一由 `src/config.py` 从 `.env` 载入并提供给各插件：
 
-*   **FaceCapture.py**: API 地址、检测阈值、冷却时间。
-*   **TimeCapture.py**: RTSP 地址、离场超时时间。
-*   **AssetScanning.py**: 串口地址 (`/dev/ttyACM0`)、门框消失超时判定（默认 3s）。
+*   **FaceCapture**: `FACE_API_URL`、`FACE_CONFIDENCE_THRESHOLD`、`FACE_MIN_DETECTION_DURATION`、`HEADLESS`。
+*   **TimeCapture**: `RTSP_URL_TIMECAPTURE`、`TIME_CONFIDENCE_THRESHOLD`、`TIME_PERSON_TIMEOUT`。
+*   **AssetScanning**: `RFID_CONN_STR`、`RFID_LIB_PATH`。
+*   **MinioUploader**: `MINIO_UPLOAD_URL`。
+*   **ToAgent**: `AGENT_BASE_URL`、`EMPLOYEE_ID`、`USER_ID`。
 
 ## 贡献者名单 (Contributors)
 [![Contributors](https://contrib.rocks/image?repo=BorderArea01/warehouse)](https://github.com/BorderArea01/warehouse/graphs/contributors)
