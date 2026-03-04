@@ -46,7 +46,7 @@ graph TD
 
     subgraph Warehouse [🏢 仓库现场 Warehouse Site]
         direction TB
-        Host[🖥️ 树莓派 Pi 5<br/>Core Controller]:::host
+        Host[🖥️ 小型PC <br/>Core Controller]:::host
         
         subgraph USB_Serial [本地直连 Local I/O]
             direction LR
@@ -65,17 +65,15 @@ graph TD
 
     subgraph Cloud [☁️ 服务器端 Backend Server]
         direction TB
-        APIGateway[⚙️ 后端 API 服务<br/>Business Logic]:::server
+        Workflow["⚙️ Workflow Engine<br/>(AWIN平台工作流)"]:::server
         MinIO[🗄️ MinIO 对象存储<br/>Image Storage]:::server
-        DB[(🛢️ 数据库<br/>MySQL/Redis)]:::db
-        APIGateway <--> DB
     end
 
     FaceCam -- "USB / CSI" --> Host
     RFIDAnt -- "同轴电缆 Coaxial" --> RFIDReader
     RFIDReader -- "USB / 串口 ttyACM0" --> Host
     HikCam -- "RTSP 视频流 TCP" --> Host
-    Host == "HTTP POST JSON<br/>人员/资产数据" ==> APIGateway
+    Host == "HTTP POST JSON<br/>Workflow Execution" ==> Workflow
     Host == "HTTP POST File<br/>抓拍图片上传" ==> MinIO
     
     linkStyle 0,1,2 stroke:#616161,stroke-width:2px;
@@ -101,7 +99,6 @@ sequenceDiagram
         participant Time as TimeCapture
         participant Asset as AssetScanning
         participant Up as MinioUploader
-        participant Agent as ToAgent
     end
 
     box "数据层 (Data)" #FFF3E0
@@ -109,7 +106,8 @@ sequenceDiagram
     end
 
     box "服务端 (Server)" #E8F5E9
-        participant Server as 后端服务器 API
+        participant MinIO as MinIO Storage
+        participant WF as Workflow Engine
     end
 
     Note over Face, Asset: 系统启动，各模块并行独立运行
@@ -120,33 +118,25 @@ sequenceDiagram
     rect rgb(227, 242, 253)
         Note left of Face: 阶段一：人员进入
         Cam->>Face: 捕获实时画面
-        Face->>Face: MediaPipe 检测到人员 (Debounce 0.6s)
+        Face->>Face: MediaPipe 检测人员 + 身份识别
         
-        Face->>Server: [POST] /recognizeFace (人脸识别)
-        Server-->>Face: 返回身份信息 (Name, UserID)
-
         Face->>Up: upload_file(抓拍图片)
-        Up->>Server: [POST] /file/upload (MinIO)
-        Server-->>Up: 返回 fileUrl
+        Up->>MinIO: Upload File
+        MinIO-->>Up: 返回 URL
         Up-->>Face: 返回图片链接
 
-        Face->>Local: 写入进入记录 (Start Time, UserID, Url)
-        Face->>Agent: invoke("人员进入通知")
-        Agent->>Server: [POST] /webhook/invoke
+        Face->>Local: 写入进入记录 (Start Time, UserID)
+        Face->>WF: [POST] 人员进入通知 (ID, ImageURL)
     end
 
     %% ============================================================
-    %% 阶段二：资产监控 (Doorframe Toggle)
+    %% 阶段二：资产监控 (Passive)
     %% ============================================================
     rect rgb(255, 248, 225)
-        Note left of Asset: 门框模式：标签经过即被短暂读取
+        Note left of Asset: 资产监控：后台静默记录
         loop 每100ms盘点
-            RFID->>Asset: 读取标签列表 (Inventory)
-            alt 标签出现后在3s内消失
-                Asset->>Local: 记录 Event: toggle (State Change)
-            else 持续存在
-                Asset->>Asset: 继续观察直到消失
-            end
+            RFID->>Asset: 读取标签 (Inventory)
+            Asset->>Local: 记录 Raw Events (Online/Offline)
         end
     end
 
@@ -158,21 +148,16 @@ sequenceDiagram
         Cam->>Time: RTSP 视频流分析
         Time->>Time: 检测仓库无人 (超时 5s)
         
-        Time->>Local: 查找并关闭“进行中”的记录
-        Local-->>Time: 返回完整记录 (含 Start/End Time)
+        Time->>Local: 查找并关闭记录 (Update End Time)
+        
+        Note right of Time: 触发资产分析
+        Time->>Asset: get_asset_changes(Start, End)
+        Asset->>Asset: sleep(8s) 等待状态稳定
+        Asset->>Local: 读取日志 & 重构会话
+        Asset-->>Time: 返回变动资产列表 (EPC List)
 
-        par 并行处理：资产分析
-            Time->>Asset: analyze_asset_changes(Start, End)
-            Asset->>Asset: sleep(5s) 等待状态稳定
-            Asset->>Local: 读取该时段内的资产日志
-            Asset->>Asset: 统计 toggle 事件列表
-            Asset->>Agent: invoke("资产变动报告")
-            Agent->>Server: [POST] /webhook/invoke
-        and 并行处理：流水上报
-            Time->>Agent: invoke("完整进出流水记录")
-            Note right of Time: 包含身份、起止时间、图片链接
-            Agent->>Server: [POST] /webhook/invoke
-        end
+        Note right of Time: 上报完整事件
+        Time->>WF: [POST] 离场与资产报告 (Time, AssetList)
     end
 ```
 
