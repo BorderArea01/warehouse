@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Face Capture Plugin for Warehouse Monitoring System (MediaPipe Version).
+Face Capture Plugin for Warehouse process System (MediaPipe Version).
 人脸捕获插件 (MediaPipe版本)
 """
 
@@ -189,9 +189,9 @@ class FaceCapture:
             self.cap.release()
             self.cap = None
 
-    def start_monitoring(self): # 启动主监控循环
-        """Start the main monitoring loop."""
-        logger.debug("Starting FaceCapture Monitoring Service...")
+    def process(self): # 启动主处理流程循环
+        """Start the main process loop."""
+        logger.debug("Starting FaceCapture Process Service...")
         
         self._init_detector()
 
@@ -300,15 +300,15 @@ class FaceCapture:
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                                        
                         self._draw_debug_info(frame, current_time)
-                        cv2.imshow('FaceCapture Monitor', frame)
+                        cv2.imshow('FaceCapture Process', frame)
                         if cv2.waitKey(1) & 0xFF == ord('q'):
                             break
                 except Exception as e:
-                    logger.error(f"Monitoring Loop Error: {e}")
+                    logger.error(f"process Loop Error: {e}")
                     # time.sleep(0.1)
                         
         except KeyboardInterrupt:
-            logger.info("Stopping monitoring...")
+            logger.info("Stopping process...")
         finally:
             self.stop_event.set()
             if self.capture_thread:
@@ -895,7 +895,7 @@ if __name__ == "__main__":
     
     try:
         face_capture = FaceCapture(model_path=model_path)
-        face_capture.start_monitoring()
+        face_capture.process()
     except KeyboardInterrupt:
         logger.info("FaceCapture stopped by user.")
     except Exception as e:
