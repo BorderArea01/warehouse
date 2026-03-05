@@ -44,7 +44,7 @@ class Config:
 
     # Face Capture Configuration
     FACE_API_URL = os.getenv('FACE_API_URL')
-    FACE_CONFIDENCE_THRESHOLD = float(os.getenv('FACE_CONFIDENCE_THRESHOLD')) if os.getenv('FACE_CONFIDENCE_THRESHOLD') else 0.65
+    FACE_CONFIDENCE_THRESHOLD = float(os.getenv('FACE_CONFIDENCE_THRESHOLD')) if os.getenv('FACE_CONFIDENCE_THRESHOLD') else 0.55
     FACE_MIN_DETECTION_DURATION = float(os.getenv('FACE_MIN_DETECTION_DURATION')) if os.getenv('FACE_MIN_DETECTION_DURATION') else 0.6
     
     # Time Capture
@@ -80,7 +80,8 @@ class Config:
         logger = logging.getLogger(name)
         if not logger.handlers:
             logger.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            # Standardize logging format to YYYY-MM-DD HH:MM:SS
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
             
             # Stream Handler
             ch = logging.StreamHandler(sys.stdout)
