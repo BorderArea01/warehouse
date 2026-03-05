@@ -51,10 +51,7 @@ class WarehouseSystem:
 
     def ensure_model_exists(self):
         """Download MediaPipe EfficientDet model if not present."""
-        model_dir = os.path.join(Config.PROJECT_ROOT, 'src', 'models')
-        # Handle if 'src' is not in path or different structure
-        if not os.path.exists(model_dir):
-             model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+        model_dir = os.path.join(Config.PROJECT_ROOT, 'models')
         
         os.makedirs(model_dir, exist_ok=True)
         self.model_path = os.path.join(model_dir, 'efficientdet_lite0.tflite')
@@ -140,7 +137,7 @@ class WarehouseSystem:
             print("System Ready. Press Ctrl+C to exit.")
             
             # This call blocks until user quits or error occurs
-            self.face_capture.start_monitoring()
+            self.face_capture.process()
 
         except Exception as e:
             logger.error(f"Runtime Error: {e}")
