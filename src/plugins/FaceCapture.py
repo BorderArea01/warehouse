@@ -214,7 +214,7 @@ class FaceCapture:
         
         min_detection_duration = Config.FACE_MIN_DETECTION_DURATION
         # min_face_area_ratio is not in config, using constant logic or hardcoded
-        min_face_area_ratio = 0.08
+        min_face_area_ratio = 0.05
         report_interval = 1.0
 
         try:
@@ -288,7 +288,8 @@ class FaceCapture:
                             
                         if is_tracking:
                             if current_time - last_seen_time > tracking_timeout:
-                                logger.info(f"Session ended. Started at {session_start_time}")
+                                session_start_str = session_start_time.strftime("%Y-%m-%d %H:%M:%S")
+                                logger.info(f"Session ended. Started at {session_start_str}")
                                 is_tracking = False
 
                     # Second pass: draw debug info (on frame that is now safe to modify)
@@ -438,8 +439,8 @@ class FaceCapture:
         
         # Quality capture config
         capture_window = 1.0    # 抓拍窗口期: 1秒
-        min_quality_threshold = 0.75 # 立即抓拍的质量阈值
-        min_accept_threshold = 0.4 # 最低接受阈值 (如果超时了还没达到这个分，就放弃这次抓拍)
+        min_quality_threshold = 0.65 # 立即抓拍的质量阈值
+        min_accept_threshold = 0.3 # 最低接受阈值 (如果超时了还没达到这个分，就放弃这次抓拍)
         
         h_frame, w_frame, _ = frame.shape
 
@@ -710,6 +711,13 @@ class FaceCapture:
 
     def _is_user_already_in(self, user_id: str) -> bool: # 检查用户是否已经在场内 (基于日志文件)
         self._check_day_rollover()
+        
+        # Reload cache periodically to sync with TimeCapture updates
+        current_time = time.time()
+        if current_time - self._open_cache_last_refresh > self._open_cache_refresh_interval:
+            self._load_open_user_cache(silent=True)
+            self._open_cache_last_refresh = current_time
+            
         return str(user_id) in self._open_user_cache
 
     def _check_day_rollover(self): # 检查日期变更，重置缓存
@@ -717,9 +725,9 @@ class FaceCapture:
         if self._open_cache_day != today_str:
             self._open_user_cache = set()
             self._open_cache_day = today_str
-            self._load_open_user_cache() # Reload for new day (likely empty)
+            self._load_open_user_cache(silent=False) # Reload for new day (likely empty)
 
-    def _load_open_user_cache(self): # 加载今日已入场用户
+    def _load_open_user_cache(self, silent: bool = False): # 加载今日已入场用户
         today_str = datetime.now().strftime("%Y-%m-%d")
         self._open_cache_day = today_str
         
@@ -730,7 +738,9 @@ class FaceCapture:
             self._open_user_cache = set()
             return
 
-        logger.info(f"Loading open user cache from {file_path}...")
+        if not silent:
+            logger.info(f"Loading open user cache from {file_path}...")
+        
         open_map = {}
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -755,7 +765,8 @@ class FaceCapture:
                         open_map[str(rec_uid)] = True
             
             self._open_user_cache = {uid for uid, opened in open_map.items() if opened}
-            logger.info(f"Loaded {len(self._open_user_cache)} users currently in warehouse.")
+            if not silent:
+                logger.info(f"Loaded {len(self._open_user_cache)} users currently in warehouse.")
             
         except Exception as e:
             logger.error(f"Error loading open user cache: {e}")

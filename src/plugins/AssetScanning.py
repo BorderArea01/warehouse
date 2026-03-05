@@ -324,13 +324,13 @@ class AssetScanning:
 
     def get_asset_changes(self, start_time_iso: str, end_time_iso: str) -> List[str]:
         """
-        Analyze asset changes between start and end times (plus 8 seconds buffer) and return the list.
+        Analyze asset changes between start and end times (plus 15 seconds buffer) and return the list.
         This is a synchronous blocking call.
         """
-        logger.info(f"Waiting 8 seconds for asset state to stabilize...")
-        time.sleep(8)
+        logger.info(f"Waiting 15 seconds for asset state to stabilize...")
+        time.sleep(15)
         
-        logger.info(f"Analyzing asset changes between {start_time_iso} and {end_time_iso} (+8s)...")
+        logger.info(f"Analyzing asset changes between {start_time_iso} and {end_time_iso} (+15s)...")
         
         try:
             # Handle both ISO and custom format for start_time
@@ -338,6 +338,10 @@ class AssetScanning:
                 start_dt = datetime.fromisoformat(start_time_iso)
             else:
                 start_dt = datetime.strptime(start_time_iso, "%Y-%m-%d %H:%M:%S")
+
+            # Expand window backwards by 30 seconds to catch early events
+            start_dt = start_dt - timedelta(seconds=15)
+            logger.info(f"Adjusted analysis start time to {start_dt} (-15s buffer)")
                 
             # Handle both ISO and custom format for end_time
             if 'T' in end_time_iso:
@@ -345,7 +349,7 @@ class AssetScanning:
             else:
                 end_dt = datetime.strptime(end_time_iso, "%Y-%m-%d %H:%M:%S")
                 
-            analysis_end_dt = end_dt + timedelta(seconds=8)
+            analysis_end_dt = end_dt + timedelta(seconds=15)
             
             # Locate log file (assuming same day for simplicity)
             today_str = start_dt.strftime("%Y-%m-%d")
@@ -516,8 +520,13 @@ class AssetScanning:
                 # 2. Filter noise (Duration < 0.5s)
                 # Exception: ongoing sessions (-1) are always valid
                 valid_sessions = []
+                # Allow shorter sessions if they are close to the action
+                min_duration_ms = 100 
+                
                 for s in merged_sessions:
-                    if s['duration_ms'] == -1 or s['duration_ms'] >= 500:
+                    # Check duration
+                    dur = s.get('duration_ms', 0)
+                    if dur == -1 or dur >= min_duration_ms:
                         valid_sessions.append(s)
                 
                 if valid_sessions:
@@ -553,7 +562,7 @@ class AssetScanning:
 
 if __name__ == "__main__":
     # Setup simple logging for standalone execution
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     
     scanner = AssetScanning()
     scanner.start_monitoring()
