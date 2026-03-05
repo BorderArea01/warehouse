@@ -1,5 +1,5 @@
 import lark_oapi as lark
-from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTrigger
+from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTrigger, P2CardActionTriggerResponse
 from lark_oapi.event.callback.model.p2_url_preview_get import P2URLPreviewGet, P2URLPreviewGetResponse
 from lark_oapi.api.im.v1.model import GetMessageRequest
 from typing import Any, Dict, List, Optional
@@ -143,30 +143,12 @@ def do_card_action_trigger(data: P2CardActionTrigger) -> Dict[str, Any]:
         toast_content = f"已收到表单提交！数据量: {len(action.form_value or {})}"
 
     # 构造响应 (立即返回)
+    # 仅返回 toast，不返回 card 字段，避免 200830 错误 (JSON 2.0 无法更新为 1.0)
+    # 同时减少数据传输，确保快速响应
     response = {
         "toast": {
             "type": "success",
             "content": toast_content
-        },
-        # 注意：如果不返回 card 字段，卡片内容不会刷新
-        # 如果需要刷新卡片显示“已提交”，可以保留 card 字段
-        # 这里为了演示快速返回，我们先只返回 toast，或者返回一个简单的静态卡片
-        "card": {
-            "type": "raw", 
-            "data": {
-                "schema": "2.0",
-                "body": {
-                    "elements": [
-                        {
-                            "tag": "div",
-                            "text": {
-                                "tag": "plain_text",
-                                "content": f"✅ {toast_content}"
-                            }
-                        }
-                    ]
-                }
-            }
         }
     }
     

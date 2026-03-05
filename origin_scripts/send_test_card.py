@@ -9,7 +9,8 @@ APP_ID = 'cli_a8d0e0c140169013'
 APP_SECRET = 'yEc0E8Aoo8Mo9NPPzphidez51xB71HXW'
 
 # 你的 Open ID (请确保这个 ID 是正确的)
-RECEIVE_ID = "ou_5c041720bc5a15235d6026ef118d77c9" 
+# RECEIVE_ID = "ou_5c041720bc5a15235d6026ef118d77c9" 
+RECEIVE_ID = "ou_caa5a3e2bf2b2e99232737f1be08183b" 
 RECEIVE_ID_TYPE = "open_id"
 
 # 卡片 JSON 文件路径
@@ -45,22 +46,36 @@ def load_and_render_card():
     
     # 3. 替换复杂对象 (options)
     # 我们需要找到那个 multi_select_static 组件并替换它的 options
-    # 路径: body -> elements -> [form] -> elements -> [multi_select_static]
+    # 同时，我们需要将 order_number 注入到按钮的 value 中，以便回调时能获取到
+    order_number_val = "ORD-TEST-001"
     
     try:
-        # 递归查找并替换 options="${asset_list}"
-        def replace_options(node):
+        # 递归查找并替换 options="${asset_list}" 以及注入 order_number
+        def process_nodes(node):
             if isinstance(node, dict):
+                # Check for options replacement
                 for key, value in node.items():
                     if key == "options" and value == "${asset_list}":
                         node[key] = asset_options
-                    else:
-                        replace_options(value)
+                
+                # Check for button behaviors
+                if node.get("tag") == "button":
+                    behaviors = node.get("behaviors", [])
+                    for behavior in behaviors:
+                        if behavior.get("type") == "callback" and "value" in behavior:
+                            # Inject order_number into the callback value
+                            if isinstance(behavior["value"], dict):
+                                behavior["value"]["order_number"] = order_number_val
+
+                # Recursively process children
+                for key, value in node.items():
+                    process_nodes(value)
+            
             elif isinstance(node, list):
                 for item in node:
-                    replace_options(item)
+                    process_nodes(item)
                     
-        replace_options(card_json)
+        process_nodes(card_json)
         
     except Exception as e:
         print(f"替换变量失败: {e}")

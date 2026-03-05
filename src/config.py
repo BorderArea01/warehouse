@@ -66,6 +66,8 @@ class Config:
     if not os.path.exists(_default_lib):
         _default_lib = '/usr/local/lib/libModuleAPI.so'
     RFID_LIB_PATH = os.getenv('RFID_LIB_PATH', _default_lib)
+    # Power in centidBm (e.g., 3000 = 30.00 dBm). Range typically 0-3300.
+    RFID_POWER = int(os.getenv('RFID_POWER', '3000'))
     
     # Feishu Configuration
     FEISHU_TOKEN = os.getenv('FEISHU_TOKEN')
