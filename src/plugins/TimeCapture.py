@@ -228,23 +228,27 @@ class TimeCapture:
             # logger.info("No open records found to close.")
             return
 
-        for record in closed_records:
-            # We now send the COMPLETE record
-            start_t = record.get('start_time')
-            end_t = record.get('end_time')
-            
-            # --- Trigger Asset Analysis and Wait for Result ---
-            asset_changes = []
-            if self.asset_scanner:
-                try:
-                    asset_changes = self.asset_scanner.get_asset_changes(start_t, end_t)
-                except Exception as e:
-                    logger.error(f"Error getting asset changes: {e}")
-            
-            record['asset_changes'] = asset_changes
-            # ------------------------------
+        # Find the earliest start time to cover the entire group visit duration
+        start_times = [r.get('start_time') for r in closed_records if r.get('start_time')]
+        earliest_start = min(start_times) if start_times else None
+        
+        # Use the end_time from the first record (all are same)
+        end_t = closed_records[0].get('end_time')
 
-            self._send_record_to_agent(record)
+        # --- Trigger Asset Analysis and Wait for Result (ONCE) ---
+        asset_changes = []
+        if self.asset_scanner and earliest_start:
+            try:
+                asset_changes = self.asset_scanner.get_asset_changes(earliest_start, end_t)
+            except Exception as e:
+                logger.error(f"Error getting asset changes: {e}")
+        
+        # Create a master record for reporting
+        # Since the report only contains time and assets (not person info), sending one report is sufficient.
+        master_record = closed_records[0].copy()
+        master_record['asset_changes'] = asset_changes
+        
+        self._send_record_to_agent(master_record)
 
     def _send_record_to_agent(self, record: Dict[str, Any]):
         """Format and send the complete record to the Agent."""
