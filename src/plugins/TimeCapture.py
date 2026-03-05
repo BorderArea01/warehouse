@@ -317,7 +317,7 @@ class TimeCapture:
                     f"\n{COLOR_RES}{'='*30}\n"
                     f"[返回] Module: TimeCapture\n"
                     f"Status: {resp.status_code}\n"
-                    f"Response: {json.dumps(resp_data, ensure_ascii=False, indent=2)}\n"
+                    f"Message: {resp_data.get("data", {}).get("message", "No message")}\n"
                     f"{'='*30}{COLOR_RESET}"
                 )
                 logger.info(log_resp)
