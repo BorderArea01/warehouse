@@ -102,6 +102,18 @@ class RfidReader:
         self.lib.GetNextTag.argtypes = [ctypes.c_int, ctypes.POINTER(TAGINFO)]
         self.lib.GetNextTag.restype = ctypes.c_int
 
+        # Power Setting Functions
+        try:
+            if hasattr(self.lib, 'SetReadPower'):
+                self.lib.SetReadPower.argtypes = [ctypes.c_int, ctypes.c_ushort]
+                self.lib.SetReadPower.restype = ctypes.c_int
+            
+            if hasattr(self.lib, 'SetWritePower'):
+                self.lib.SetWritePower.argtypes = [ctypes.c_int, ctypes.c_ushort]
+                self.lib.SetWritePower.restype = ctypes.c_int
+        except Exception as e:
+            logger.warning(f"Failed to setup power functions: {e}")
+
     def connect(self, conn_str: str, ant_cnt: int = 1) -> bool:
         """Connect to the RFID Reader."""
         b_conn_str = conn_str.encode('utf-8')
@@ -135,6 +147,35 @@ class RfidReader:
             'phase': tag_info.Phase,
             'timestamp': time.time()
         }
+
+    def set_power(self, power_value: int) -> bool:
+        """Set read and write power (in centidBm, e.g. 3000 for 30dBm)."""
+        if not self.hreader:
+            return False
+            
+        try:
+            # Check if functions exist
+            if not hasattr(self.lib, 'SetReadPower') or not hasattr(self.lib, 'SetWritePower'):
+                logger.warning("Power control functions not available in library.")
+                return False
+                
+            # Call SetReadPower
+            ret_read = self.lib.SetReadPower(self.hreader, ctypes.c_ushort(power_value))
+            if ret_read != MT_OK_ERR:
+                logger.error(f"Failed to set read power to {power_value}, code: {ret_read}")
+                return False
+                
+            # Call SetWritePower
+            ret_write = self.lib.SetWritePower(self.hreader, ctypes.c_ushort(power_value))
+            if ret_write != MT_OK_ERR:
+                logger.error(f"Failed to set write power to {power_value}, code: {ret_write}")
+                return False
+                
+            logger.info(f"RFID Power set to {power_value} centidBm successfully.")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting power: {e}")
+            return False
 
     def close(self):
         """Close the connection to the reader."""
@@ -187,6 +228,9 @@ class AssetScanning:
                 break
         
         if connected:
+            # Set Power
+            self.reader.set_power(Config.RFID_POWER)
+            
             self.connected = True
             self.running = True
             self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)

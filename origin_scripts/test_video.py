@@ -1,9 +1,12 @@
 import cv2
 import numpy as np
-import mediapipe as mp
 import time
 import os
+import mediapipe as mp
 
+face_detector = mp.solutions.face_detection.FaceDetection(
+    model_selection=0, min_detection_confidence=0.5
+)
 # ==============================
 # 配置参数
 # ==============================
@@ -18,12 +21,6 @@ MAX_MISSING_FRAMES = 10   # 人消失多少帧后保存
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # ==============================
-# MediaPipe 初始化
-# ==============================
-mp_face = mp.solutions.face_detection
-face_detector = mp_face.FaceDetection(model_selection=0, min_detection_confidence=0.5)
-
-# ==============================
 # 工具函数
 # ==============================
 def blur_score(img):
@@ -32,7 +29,7 @@ def blur_score(img):
 def brightness_score(img):
     return np.mean(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
 
-def angle_score(landmarks, bbox):
+def angle_score(landmarks):
     # 用眼睛关键点计算倾斜角度
     if len(landmarks) < 2:
         return 0
@@ -43,7 +40,9 @@ def angle_score(landmarks, bbox):
     angle = np.degrees(np.arctan2(dy, dx))
     return angle
 
-def evaluate_face(face_img, landmarks, bbox):
+def evaluate_face(face_img, landmarks):
+    if face_img.size == 0:
+        return 0
     h, w = face_img.shape[:2]
     if w < MIN_FACE_SIZE:
         return 0
@@ -53,7 +52,7 @@ def evaluate_face(face_img, landmarks, bbox):
     bright = brightness_score(face_img)
     if bright < BRIGHTNESS_MIN or bright > BRIGHTNESS_MAX:
         return 0
-    angle = abs(angle_score(landmarks, bbox))
+    angle = abs(angle_score(landmarks))
     if angle > ANGLE_THRESHOLD:
         return 0
     # 综合评分
@@ -68,6 +67,8 @@ next_track_id = 0
 frame_index = 0
 
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 # ==============================
 # 主循环
@@ -95,15 +96,19 @@ while True:
             y2 = int((bboxC.ymin + bboxC.height) * h)
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(w, x2), min(h, y2)
+
+            if x2 <= x1 or y2 <= y1:
+                continue
+
             face_img = frame[y1:y2, x1:x2]
 
             # MediaPipe 返回关键点
             landmarks = []
-            if det.location_data.relative_keypoints:
+            if getattr(det.location_data, "relative_keypoints", None):
                 for kp in det.location_data.relative_keypoints:
                     landmarks.append((int(kp.x * w), int(kp.y * h)))
 
-            score = evaluate_face(face_img, landmarks, (x1, y1, x2, y2))
+            score = evaluate_face(face_img, landmarks)
             detections.append({"bbox": (x1, y1, x2, y2), "score": score})
 
     # ==============================
@@ -125,7 +130,7 @@ while True:
             interArea = max(0, xB-xA)*max(0, yB-yA)
             boxAArea = (bbox[2]-bbox[0])*(bbox[3]-bbox[1])
             boxBArea = (tbbox[2]-tbbox[0])*(tbbox[3]-tbbox[1])
-            iou = interArea / float(boxAArea + boxBArea - interArea)
+            iou = interArea / float(boxAArea + boxBArea - interArea + 1e-5)
             if iou > 0.4 and iou > max_iou:
                 max_iou = iou
                 matched_id = track_id
@@ -165,9 +170,9 @@ while True:
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(frame, f"ID {track_id}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
 
-    # FPS 计算
+    # FPS 计算（滑动平均）
     fps_time_new = time.time()
-    fps = 1.0 / (fps_time_new - fps_time)
+    fps = 0.9*fps + 0.1*(1.0 / (fps_time_new - fps_time))
     fps_time = fps_time_new
     cv2.putText(frame, f"FPS: {fps:.1f}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,255), 2)
 
