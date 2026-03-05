@@ -78,7 +78,7 @@ class MinioUploader:
             f"\n{COLOR_RES}{'='*30}\n"
             f"[返回] Module: MinioUploader\n"
             f"Status: {resp.status_code}\n"
-            f"Response: {json.dumps(result, ensure_ascii=False, indent=2)}\n"
+            f"file_url: {data.get('file_url', '')}\n"
             f"{'='*30}{COLOR_RESET}"
         )
         logger.info(log_resp)
