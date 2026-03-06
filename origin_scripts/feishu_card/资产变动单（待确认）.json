@@ -1,0 +1,199 @@
+{
+    "schema": "2.0",
+    "config": {
+        "update_multi": true,
+        "style": {
+            "text_size": {
+                "normal_v2": {
+                    "default": "normal",
+                    "pc": "normal",
+                    "mobile": "heading"
+                }
+            }
+        }
+    },
+    "body": {
+        "direction": "vertical",
+        "elements": [
+            {
+                "tag": "form",
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>确认单号:</font>** <font color='grey'>${order_number}</font>",
+                        "text_align": "left",
+                        "text_size": "normal"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>用户:</font>** <person id=${user_id} show_name=true show_avatar=true style='normal'></person>",
+                        "text_align": "left",
+                        "text_size": "normal"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>发生时间:</font>** <font color='grey'>${change_time}</font>",
+                        "text_align": "left",
+                        "text_size": "normal"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>\\*请准确选择关于您的变动项:</font>**\n<font color='grey-500'>（没有变动则留空）</font>",
+                        "text_align": "left",
+                        "text_size": "normal",
+                        "margin": "0px 0px 8px 0px"
+                    },
+                    {
+                        "tag": "multi_select_static",
+                        "placeholder": {
+                            "tag": "plain_text",
+                            "content": "请选择资产变动项"
+                        },
+                        "options": "${asset_list}",
+                        "type": "default",
+                        "width": "fill",
+                        "required": false,
+                        "name": "input_assets",
+                        "margin": "0px 0px 16px 0px",
+                        "element_id": "cIiptD7Z4hCtAeR5Rb0b"
+                    },
+                    {
+                        "tag": "hr",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>其他说明:</font>**",
+                        "text_align": "left",
+                        "text_size": "normal_v2",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "input",
+                        "placeholder": {
+                            "tag": "plain_text",
+                            "content": "请输入"
+                        },
+                        "default_value": "",
+                        "width": "fill",
+                        "name": "input_remark",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "column_set",
+                        "flex_mode": "flow",
+                        "horizontal_spacing": "8px",
+                        "horizontal_align": "right",
+                        "columns": [
+                            {
+                                "tag": "column",
+                                "width": "auto",
+                                "elements": [
+                                    {
+                                        "tag": "button",
+                                        "text": {
+                                            "tag": "plain_text",
+                                            "content": "确认"
+                                        },
+                                        "type": "primary_filled",
+                                        "width": "default",
+                                        "size": "medium",
+                                        "behaviors": [
+                                            {
+                                                "type": "callback",
+                                                "value": {
+                                                    "action": "card.action.trigger"
+                                                }
+                                            }
+                                        ],
+                                        "form_action_type": "submit",
+                                        "name": "confirm_button",
+                                        "margin": "4px 0px 4px 0px"
+                                    }
+                                ],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top"
+                            },
+                            {
+                                "tag": "column",
+                                "width": "auto",
+                                "elements": [
+                                    {
+                                        "tag": "button",
+                                        "text": {
+                                            "tag": "plain_text",
+                                            "content": "反馈问题"
+                                        },
+                                        "type": "default",
+                                        "width": "default",
+                                        "confirm": {
+                                            "title": {
+                                                "tag": "plain_text",
+                                                "content": "反馈误报并废除该确认单吗？"
+                                            },
+                                            "text": {
+                                                "tag": "plain_text",
+                                                "content": "${remark}"
+                                            }
+                                        },
+                                        "behaviors": [
+                                            {
+                                                "type": "callback",
+                                                "value": {
+                                                    "action": "card.action.trigger"
+                                                }
+                                            }
+                                        ],
+                                        "form_action_type": "submit",
+                                        "name": "feedback_button",
+                                        "margin": "4px 0px 4px 0px"
+                                    }
+                                ],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top"
+                            }
+                        ]
+                    }
+                ],
+                "direction": "vertical",
+                "horizontal_align": "left",
+                "vertical_align": "top",
+                "padding": "12px 12px 12px 12px",
+                "margin": "0px 0px 0px 0px",
+                "name": "asset_confirmation_form"
+            },
+            {
+                "tag": "hr",
+                "margin": "0px 0px 0px 0px"
+            }
+        ]
+    },
+    "header": {
+        "title": {
+            "tag": "plain_text",
+            "content": "资产变动单"
+        },
+        "subtitle": {
+            "tag": "plain_text",
+            "content": ""
+        },
+        "text_tag_list": [
+            {
+                "tag": "text_tag",
+                "text": {
+                    "tag": "plain_text",
+                    "content": "待确认"
+                },
+                "color": "orange"
+            }
+        ],
+        "template": "blue",
+        "icon": {
+            "tag": "standard_icon",
+            "token": "googledrive_outlined"
+        },
+        "padding": "12px 8px 12px 8px"
+    }
+}

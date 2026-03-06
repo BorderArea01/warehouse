@@ -1,0 +1,243 @@
+{
+    "schema": "2.0",
+    "config": {
+        "update_multi": true,
+        "style": {
+            "text_size": {
+                "normal_v2": {
+                    "default": "normal",
+                    "pc": "normal",
+                    "mobile": "heading"
+                }
+            }
+        }
+    },
+    "body": {
+        "direction": "vertical",
+        "elements": [
+            {
+                "tag": "form",
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='purple-600'>有资产变动，但未识别到对应公司员工，请进行人工处理。</font>**",
+                        "text_align": "left",
+                        "text_size": "normal_v2",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "hr",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>相关快照:</font>**",
+                        "text_align": "left",
+                        "text_size": "normal_v2",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "column_set",
+                        "horizontal_spacing": "8px",
+                        "horizontal_align": "left",
+                        "columns": [
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "weight": 1
+                            },
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [
+                                    {
+                                        "tag": "img",
+                                        "img_key": "${face_cap}",
+                                        "preview": true,
+                                        "transparent": false,
+                                        "scale_type": "crop_center",
+                                        "margin": "0px 0px 0px 0px"
+                                    }
+                                ],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "weight": 2
+                            },
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "weight": 1
+                            }
+                        ],
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>单号:</font>** <font color='grey'>${order_number}</font>",
+                        "text_align": "left",
+                        "text_size": "normal"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>发生时间:</font>** <font color='grey'>${change_time}</font>",
+                        "text_align": "left",
+                        "text_size": "normal"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>请选择对应人员:</font>**\n<font color='grey-500'>（若是游客取走资产，则需要选择相关负责人）</font>",
+                        "text_align": "left",
+                        "text_size": "normal",
+                        "margin": "0px 0px 8px 0px"
+                    },
+                    {
+                        "tag": "multi_select_static",
+                        "placeholder": {
+                            "tag": "plain_text",
+                            "content": "请选择"
+                        },
+                        "options": "${event_user_ids}",
+                        "type": "default",
+                        "width": "default",
+                        "name": "MultiSelect_3zegplt7pxi",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>请选择对应人员的变动项:</font>**",
+                        "text_align": "left",
+                        "text_size": "normal",
+                        "margin": "0px 0px 8px 0px"
+                    },
+                    {
+                        "tag": "multi_select_static",
+                        "placeholder": {
+                            "tag": "plain_text",
+                            "content": "请选择资产变动项"
+                        },
+                        "options": "${asset_list}",
+                        "type": "default",
+                        "width": "fill",
+                        "required": false,
+                        "name": "input_assets",
+                        "margin": "0px 0px 16px 0px",
+                        "element_id": "cIiptD7Z4hCtAeR5Rb0b"
+                    },
+                    {
+                        "tag": "hr",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "markdown",
+                        "content": "**<font color='blue-600'>其他说明:</font>**",
+                        "text_align": "left",
+                        "text_size": "normal_v2",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "input",
+                        "placeholder": {
+                            "tag": "plain_text",
+                            "content": "请输入"
+                        },
+                        "default_value": "",
+                        "width": "fill",
+                        "name": "input_remark",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "column_set",
+                        "flex_mode": "flow",
+                        "horizontal_spacing": "8px",
+                        "horizontal_align": "right",
+                        "columns": [
+                            {
+                                "tag": "column",
+                                "width": "auto",
+                                "elements": [
+                                    {
+                                        "tag": "button",
+                                        "text": {
+                                            "tag": "plain_text",
+                                            "content": "确认"
+                                        },
+                                        "type": "primary_filled",
+                                        "width": "default",
+                                        "size": "medium",
+                                        "behaviors": [
+                                            {
+                                                "type": "callback",
+                                                "value": {
+                                                    "action": "card.action.trigger"
+                                                }
+                                            }
+                                        ],
+                                        "form_action_type": "submit",
+                                        "name": "confirm_button",
+                                        "margin": "4px 0px 4px 0px"
+                                    }
+                                ],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top"
+                            },
+                            {
+                                "tag": "column",
+                                "width": "auto",
+                                "elements": [],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top"
+                            }
+                        ]
+                    }
+                ],
+                "direction": "vertical",
+                "horizontal_align": "left",
+                "vertical_align": "top",
+                "padding": "12px 12px 12px 12px",
+                "margin": "0px 0px 0px 0px",
+                "name": "asset_confirmation_form"
+            },
+            {
+                "tag": "hr",
+                "margin": "0px 0px 0px 0px"
+            }
+        ]
+    },
+    "header": {
+        "title": {
+            "tag": "plain_text",
+            "content": "资产变动单"
+        },
+        "subtitle": {
+            "tag": "plain_text",
+            "content": ""
+        },
+        "text_tag_list": [
+            {
+                "tag": "text_tag",
+                "text": {
+                    "tag": "plain_text",
+                    "content": "待人工处理"
+                },
+                "color": "red"
+            }
+        ],
+        "template": "purple",
+        "icon": {
+            "tag": "standard_icon",
+            "token": "googledrive_outlined"
+        },
+        "padding": "12px 8px 12px 8px"
+    }
+}

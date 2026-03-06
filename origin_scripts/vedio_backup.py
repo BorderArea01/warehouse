@@ -15,7 +15,7 @@ logger = logging.getLogger("VideoBackup")
 class VideoBackup:
     """
     VideoBackup Plugin:
-    - 运行在远端服务器（非树莓派）。
+    - 运行在远端服务器。
     - 根据给定的开始和结束时间，从海康威视摄像头获取录像回放并保存。
     """
     def __init__(self, output_dir="backups"):

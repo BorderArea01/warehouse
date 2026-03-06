@@ -1,0 +1,122 @@
+{
+    "schema": "2.0",
+    "config": {
+        "update_multi": true,
+        "locales": [
+            "en_us"
+        ],
+        "style": {
+            "text_size": {
+                "normal_v2": {
+                    "default": "normal",
+                    "pc": "normal",
+                    "mobile": "heading"
+                }
+            }
+        }
+    },
+    "body": {
+        "direction": "vertical",
+        "padding": "12px 12px 12px 12px",
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": "<font color=\"grey\">时间</font>  ${current_time}",
+                "i18n_content": {
+                    "en_us": "<font color=\"grey\">Incident time</font>\n${current_time}"
+                },
+                "text_align": "center",
+                "text_size": "normal_v2",
+                "margin": "0px 0px 0px 0px"
+            },
+            {
+                "tag": "markdown",
+                "content": "\n<person id='${user_id}' show_name=true show_avatar=true style='normal'></person><font color=\"grey\">进入仓库</font>",
+                "i18n_content": {
+                    "en_us": "<font color=\"grey\">Alert details</font>\nMobile client crash rate at 5%"
+                },
+                "text_align": "center",
+                "text_size": "normal",
+                "margin": "0px 0px 0px 0px"
+            },
+            {
+                "tag": "column_set",
+                "horizontal_spacing": "8px",
+                "horizontal_align": "left",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    },
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "elements": [
+                            {
+                                "tag": "img",
+                                "img_key": "${face_cap}",
+                                "preview": true,
+                                "transparent": false,
+                                "scale_type": "crop_center",
+                                "size": "large",
+                                "corner_radius": "16px",
+                                "margin": "0px 0px 0px 0px"
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top"
+                    },
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    }
+                ],
+                "margin": "0px 0px 0px 0px"
+            },
+            {
+                "tag": "hr",
+                "margin": "0px 0px 0px 0px"
+            }
+        ]
+    },
+    "header": {
+        "title": {
+            "tag": "plain_text",
+            "content": "人员进入仓库通知",
+            "i18n_content": {
+                "en_us": "[Action Needed] Alert: Process Error - Please Address Promptly"
+            }
+        },
+        "subtitle": {
+            "tag": "plain_text",
+            "content": ""
+        },
+        "text_tag_list": [
+            {
+                "tag": "text_tag",
+                "text": {
+                    "tag": "plain_text",
+                    "content": "提醒"
+                },
+                "color": "wathet"
+            }
+        ],
+        "template": "purple",
+        "icon": {
+            "tag": "standard_icon",
+            "token": "bell_filled"
+        },
+        "padding": "12px 12px 12px 12px"
+    }
+}
