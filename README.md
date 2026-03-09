@@ -176,6 +176,45 @@ sequenceDiagram
 *   `origin_scripts/send_test_card.py`: 飞书卡片消息测试脚本。
 *   `origin_scripts/vedio_backup.py`: 录像备份脚本参考。
 
+## 飞书长连接服务 (Feishu Long Connection)
+
+本系统包含一个独立的飞书长连接服务模块，用于处理飞书卡片消息的交互事件。该模块独立于核心监控业务运行，主要负责打通“飞书前端交互”与“后端工作流”。
+
+### 1. 核心优势
+*   **无需公网 IP**: 采用飞书开放平台的 WebSocket 长连接模式，部署在内网即可接收飞书事件回调，无需穿透内网或配置公网域名。
+*   **实时交互**: 支持飞书卡片按钮（如“确认”、“反馈”）的实时响应与回传。
+
+### 2. 工作原理
+该服务运行 `origin_scripts/feishu_longconnect.py` 脚本，启动后会：
+1.  与飞书服务器建立 **WebSocket** 长连接。
+2.  监听 **卡片交互事件 (card.action.trigger)**。
+3.  根据卡片类型（`card_type`）分发到不同的处理函数。
+4.  调用后端 **Workflow API** (`/open/workflow/execute`) 执行具体的业务逻辑（如更新资产状态）。
+
+### 3. 支持的交互类型
+脚本根据 `card_type` 字段识别以下业务场景：
+*   **asset_review**: 资产复核
+*   **asset_confirm**: 资产确认
+*   **asset_feedback**: 异常反馈
+*   **asset_visitor**: 访客资产登记
+![飞书卡片示例](images/feishu_card.png)
+
+### 4. 配置与运行
+**依赖库**: 需安装 `lark-oapi` (已包含在 `requirements.txt` 中)。
+
+**配置**:
+在脚本 `origin_scripts/feishu_longconnect.py` 中配置飞书应用的凭证：
+```python
+APP_ID = 'cli_...'
+APP_SECRET = '...'
+```
+
+**启动命令**:
+```bash
+python3 origin_scripts/feishu_longconnect.py
+```
+> 注意：该脚本通常作为后台服务常驻运行。
+
 ## 快速开始 (Quick Start)
 
 ### 1. 安装依赖
