@@ -149,7 +149,7 @@
                             "tag": "plain_text",
                             "content": "请输入"
                         },
-                        "default_value": "",
+                        "default_value": "${remark}",
                         "width": "fill",
                         "name": "input_remark",
                         "margin": "0px 0px 0px 0px"
@@ -173,6 +173,7 @@
                                         "type": "primary_filled",
                                         "width": "default",
                                         "size": "medium",
+                                        "disabled": true,
                                         "behaviors": [
                                             {
                                                 "type": "callback",
