@@ -7,7 +7,7 @@ from datetime import datetime
 # 配置信息
 APP_ID = 'cli_a8d0e0c140169013'
 APP_SECRET = 'yEc0E8Aoo8Mo9NPPzphidez51xB71HXW'
-RECEIVE_ID = "ou_caa5a3e2bf2b2e99232737f1be08183b" 
+RECEIVE_ID = "ou_5c041720bc5a15235d6026ef118d77c9" # ou_caa5a3e2bf2b2e99232737f1be08183b
 RECEIVE_ID_TYPE = "open_id"
 
 # 卡片 JSON 文件路径

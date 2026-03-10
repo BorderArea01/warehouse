@@ -11,6 +11,19 @@ import threading
 APP_ID = 'cli_a8d0e0c140169013'
 APP_SECRET = 'yEc0E8Aoo8Mo9NPPzphidez51xB71HXW'
 
+# API 配置
+FEEDBACK_API = {
+    "url": "http://192.168.11.24:8088/open/workflow/execute",
+    "key": "wf_9ec76b0a3a2a4be9ae386514c79e8390",
+    "id": "2030844121164091393"
+}
+
+CONFIRM_API = {
+    "url": "http://192.168.11.24:8088/open/workflow/execute",
+    "key": "wf_91c35df1b27f4dd5acb732aee647d81b",
+    "id": "2028353753264754690"
+}
+
 def log_info(title, content):
     """Simple formatted logger"""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -23,104 +36,160 @@ def log_info(title, content):
 
 # --- Workflow API ---
 
-def call_workflow_api(payload):
-    api_url = "http://192.168.11.24:8088/open/workflow/execute"
+def call_workflow_api(payload, api_config=CONFIRM_API):
+    api_url = api_config["url"]
     headers = {
-        "X-API-Key": "wf_8bf2b0a20cf04804b098c99019854194",
+        "X-API-Key": api_config["key"],
         "User-Agent": "Apifox/1.0.0 (https://apifox.com)",
         "Content-Type": "application/json",
         "Host": "192.168.11.24:8088",
         "Connection": "keep-alive"
     }
     
+    # 注入 workflowId
+    payload["workflowId"] = api_config["id"]
+    
     try:
-        log_info("Calling Workflow API (Async)", payload)
         resp = requests.post(api_url, json=payload, headers=headers, timeout=10)
-        log_info("Workflow API Response (Async)", {"status": resp.status_code, "text": resp.text})
     except Exception as e:
         log_info("Workflow API Error (Async)", str(e))
 
-def prepare_common_payload(order_number, asset_list, remark):
+def prepare_common_payload(order_number, asset_list, remark, user_id=None):
     """准备通用的 payload 结构"""
     try:
         event_id_int = int(order_number)
     except (ValueError, TypeError):
         event_id_int = 0 
         
+    inputs = {
+        "event_id": event_id_int, # 注意：文档要求可能是 order_number 字符串，这里保持 int 尝试
+        "asset_list": asset_list,
+        "remark": remark,
+    }
+    
+    if user_id:
+        inputs["person_id"] = user_id
+        
     return {
-        "workflowId": 2028353753264754690,
-        "inputs": {
-            "event_id": event_id_int,
-            "order_number_str": str(order_number),
-            "asset_list": asset_list,
-            "remark": remark,
-            # 其他字段根据不同 handler 添加
-        }
+        # workflowId 由 call_workflow_api 注入
+        "inputs": inputs
     }
 
-# --- Handlers for different card types ---
-
-def handle_asset_review(action, order_number):
+def handle_asset_review(action, order_number, user_id):
     """处理资产复核卡片"""
-    log_info("Handler", f"Processing Asset Review for {order_number}")
     form_data = action.form_value or {}
     asset_list = form_data.get("input_assets", [])
     remark = form_data.get("input_remark", "")
     
-    payload = prepare_common_payload(order_number, asset_list, remark)
-    payload["inputs"]["card_type"] = "asset_review"
+    payload = prepare_common_payload(order_number, asset_list, remark, user_id)
     
-    call_workflow_api(payload)
+    log_info("Processing Asset Review", {
+        "action": action.name,
+        "order_number": order_number,
+        "user_id": user_id,
+        "form_data": form_data,
+        "workflow_payload": payload
+    })
+    
+    call_workflow_api(payload, CONFIRM_API)
 
-def handle_asset_confirm(action, order_number):
+def handle_asset_confirm(action, order_number, user_id):
     """处理资产确认卡片"""
-    log_info("Handler", f"Processing Asset Confirm for {order_number}")
+    form_data = action.form_value or {}
+    asset_list = form_data.get("input_assets", [])
+    remark = form_data.get("input_remark", "")
+
+    payload = prepare_common_payload(order_number, asset_list, remark, user_id)
+
+    log_info("Processing Asset Confirm", {
+        "action": action.name,
+        "order_number": order_number,
+        "user_id": user_id,
+        "form_data": form_data,
+        "workflow_payload": payload
+    })
+    
+    call_workflow_api(payload, CONFIRM_API)
+
+def handle_asset_feedback(action, order_number, user_id):
+    """处理资产反馈卡片 (确认按钮)"""
     form_data = action.form_value or {}
     asset_list = form_data.get("input_assets", [])
     remark = form_data.get("input_remark", "")
     
-    payload = prepare_common_payload(order_number, asset_list, remark)
-    payload["inputs"]["card_type"] = "asset_confirm"
-    
-    call_workflow_api(payload)
+    payload = prepare_common_payload(order_number, asset_list, remark, user_id)
 
-def handle_asset_feedback(action, order_number):
-    """处理资产反馈卡片"""
-    log_info("Handler", f"Processing Asset Feedback for {order_number}")
+    log_info("Processing Asset Feedback Confirm", {
+        "action": action.name,
+        "order_number": order_number,
+        "user_id": user_id,
+        "form_data": form_data,
+        "workflow_payload": payload
+    })
+    
+    call_workflow_api(payload, CONFIRM_API)
+
+def handle_feedback_button_click(action, order_number, user_id):
+    """处理卡片上的 '反馈问题' 按钮点击"""
     form_data = action.form_value or {}
     asset_list = form_data.get("input_assets", [])
     remark = form_data.get("input_remark", "")
     
-    payload = prepare_common_payload(order_number, asset_list, remark)
-    payload["inputs"]["card_type"] = "asset_feedback"
-    
-    call_workflow_api(payload)
+    # 获取卡片发送时的 change_time，如果没有则使用当前时间作为兜底
+    action_value = action.value or {}
+    change_time = action_value.get("change_time")
+    if not change_time:
+        change_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def handle_asset_visitor(action, order_number):
+    payload = prepare_common_payload(order_number, asset_list, remark, user_id)
+    payload["inputs"]["change_time"] = change_time
+
+    log_info("Processing Feedback Button Click", {
+        "action": action.name,
+        "order_number": order_number,
+        "user_id": user_id,
+        "change_time": change_time,
+        "form_data": form_data,
+        "workflow_payload": payload
+    })
+    
+    call_workflow_api(payload, FEEDBACK_API)
+
+def handle_asset_visitor(action, order_number, user_id):
     """处理游客处理卡片"""
-    log_info("Handler", f"Processing Asset Visitor for {order_number}")
     form_data = action.form_value or {}
     asset_list = form_data.get("input_assets", [])
     remark = form_data.get("input_remark", "")
-    event_user_ids = form_data.get("MultiSelect_3zegplt7pxi", [])
-    
-    payload = prepare_common_payload(order_number, asset_list, remark)
-    payload["inputs"]["card_type"] = "asset_visitor"
-    payload["inputs"]["event_user_ids"] = event_user_ids
-    
-    call_workflow_api(payload)
 
-def handle_default(action, order_number):
+    payload = prepare_common_payload(order_number, asset_list, remark, user_id)
+    
+    log_info("Processing Asset Visitor", {
+        "action": action.name,
+        "order_number": order_number,
+        "user_id": user_id,
+        "form_data": form_data,
+        "workflow_payload": payload
+    })
+    
+    call_workflow_api(payload, CONFIRM_API)
+
+def handle_default(action, order_number, user_id):
     """默认处理逻辑"""
-    log_info("Handler", f"Processing Default for {order_number}")
     form_data = action.form_value or {}
     asset_list = form_data.get("input_assets", [])
     remark = form_data.get("input_remark", "")
+
+    payload = prepare_common_payload(order_number, asset_list, remark, user_id)
+
+    log_info("Processing Default (Unknown Type)", {
+        "action": action.name,
+        "order_number": order_number,
+        "user_id": user_id,
+        "form_data": form_data,
+        "workflow_payload": payload,
+    })
     
-    payload = prepare_common_payload(order_number, asset_list, remark)
-    payload["inputs"]["card_type"] = "unknown"
-    
-    call_workflow_api(payload)
+    call_workflow_api(payload, CONFIRM_API)
 
 # 映射表
 HANDLERS = {
@@ -138,30 +207,25 @@ def do_card_action_trigger(data: P2CardActionTrigger) -> Dict[str, Any]:
     """
     event = data.event
     action = event.action
-    
-    # 从 action.value 中提取关键信息
+
     action_value = action.value or {}
     order_number = action_value.get("order_number", "Unknown")
     card_type = action_value.get("card_type", "default")
-    
-    log_info("Card Action Triggered", {"card_type": card_type, "order_number": order_number, "action": action.name})
 
-    toast_content = "操作成功"
+    user_id = ""
+    if event.operator:
+        user_id = event.operator.user_id or event.operator.open_id or "unknown"
     
-    # 按钮点击处理
+    toast_content = "操作成功"
+
     if action.name == "confirm_button":
         handler = HANDLERS.get(card_type, handle_default)
-        # 异步执行 Handler
-        threading.Thread(target=handler, args=(action, order_number)).start()
+        threading.Thread(target=handler, args=(action, order_number, user_id)).start()
         toast_content = "确认提交成功！（后台处理中）"
 
     elif action.name == "feedback_button":
-        # 反馈按钮通常也可以调用同样的 API，或者有单独逻辑
-        # 这里为了简单，假设反馈也走同样的 Handler，或者在这里区分
-        # 如果需要区分反馈和确认，可以在 Handler 里判断 action.name
-        # 或者使用单独的 Handler
-        handler = HANDLERS.get(card_type, handle_default)
-        threading.Thread(target=handler, args=(action, order_number)).start()
+        handler = handle_feedback_button_click
+        threading.Thread(target=handler, args=(action, order_number, user_id)).start()
         toast_content = "反馈已收到，加急处理中。"
     else:
         toast_content = f"已收到表单提交！数据量: {len(action.form_value or {})}"
@@ -171,9 +235,6 @@ def do_card_action_trigger(data: P2CardActionTrigger) -> Dict[str, Any]:
             "type": "success",
             "content": toast_content
         },
-        # 注意：如果不返回 card 字段，卡片内容不会刷新
-        # 如果需要刷新卡片显示“已提交”，可以保留 card 字段
-        # 这里为了演示快速返回，我们先只返回 toast，或者返回一个简单的静态卡片
         "card": {
             "type": "raw", 
             "data": {
@@ -193,7 +254,6 @@ def do_card_action_trigger(data: P2CardActionTrigger) -> Dict[str, Any]:
         }
     }
     
-    log_info("Sending Response (Immediate)", {"Toast": toast_content})
     return response
 
 def do_url_preview_get(data: P2URLPreviewGet) -> P2URLPreviewGetResponse:

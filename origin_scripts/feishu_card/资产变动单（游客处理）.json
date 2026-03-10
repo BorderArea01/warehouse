@@ -100,15 +100,15 @@
                         "margin": "0px 0px 8px 0px"
                     },
                     {
-                        "tag": "multi_select_static",
+                        "tag": "select_person",
                         "placeholder": {
                             "tag": "plain_text",
                             "content": "请选择"
                         },
                         "options": "${event_user_ids}",
-                        "type": "default",
                         "width": "default",
-                        "name": "MultiSelect_3zegplt7pxi",
+                        "type": "default",
+                        "name": "PersonSelect_65khv13dvhc",
                         "margin": "0px 0px 0px 0px"
                     },
                     {
@@ -173,7 +173,6 @@
                                         "type": "primary_filled",
                                         "width": "default",
                                         "size": "medium",
-                                        "disabled": true,
                                         "behaviors": [
                                             {
                                                 "type": "callback",

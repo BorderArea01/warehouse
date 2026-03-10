@@ -8,7 +8,7 @@ import random
 # 配置信息
 APP_ID = 'cli_a8d0e0c140169013'
 APP_SECRET = 'yEc0E8Aoo8Mo9NPPzphidez51xB71HXW'
-RECEIVE_ID = "ou_caa5a3e2bf2b2e99232737f1be08183b" 
+RECEIVE_ID = "ou_5c041720bc5a15235d6026ef118d77c9" 
 RECEIVE_ID_TYPE = "open_id"
 
 # 卡片 JSON 文件路径
@@ -23,12 +23,12 @@ def load_and_render_card():
         card_content = f.read()
 
     # 准备数据
-    order_number = f"ORD-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    order_number = f"60"
     change_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # 资产列表选项
     asset_options = [
-        {"text": {"tag": "plain_text", "content": "显示器"}, "value": "monitor"},
+        {"text": {"tag": "plain_text", "content": "Tesla L4"}, "value": "E28069150000501DC3133E26"},
         {"text": {"tag": "plain_text", "content": "键盘"}, "value": "keyboard"},
         {"text": {"tag": "plain_text", "content": "鼠标"}, "value": "mouse"}
     ]
@@ -73,6 +73,7 @@ def load_and_render_card():
                     if behavior.get("type") == "callback" and "value" in behavior:
                         if isinstance(behavior["value"], dict):
                             behavior["value"]["order_number"] = order_number
+                            behavior["value"]["change_time"] = change_time
                             behavior["value"]["card_type"] = "asset_visitor"
 
             # 递归处理子节点
