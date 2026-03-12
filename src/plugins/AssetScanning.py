@@ -14,7 +14,7 @@ import time
 import json
 import threading
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Any, Set
 
 # Local Imports
@@ -293,7 +293,11 @@ class AssetScanning:
 
     def _log_asset_event(self, tag_data: Dict[str, Any], event_type: str):
         """Append event to daily JSONL log."""
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        # Use UTC+8 for consistency with other modules
+        bj_tz = timezone(timedelta(hours=8))
+        now = datetime.now(bj_tz)
+        today_str = now.strftime("%Y-%m-%d")
+        
         log_file = os.path.join(self.log_dir, f"{today_str}_asset_log.jsonl")
         
         epc = tag_data.get('epc')
@@ -302,11 +306,9 @@ class AssetScanning:
         
         # Event time (when it happened)
         event_ts = tag_data.get('timestamp', time.time())
-        event_dt = datetime.fromtimestamp(event_ts)
+        # Convert timestamp to UTC+8 datetime
+        event_dt = datetime.fromtimestamp(event_ts, bj_tz)
         
-        # Log write time (now)
-        now = datetime.now()
-
         record = {
             "timestamp": self._format_time(now),
             "event": event_type,

@@ -206,16 +206,14 @@ class FaceCapture:
         session_start_time = None
         last_seen_time = 0.0
         
-        # Debounce
-        potential_start_time = 0.0
-        is_potential_entry = False
-        tracking_timeout = 5.0
+        # Debounce & Tracking Config
+        tracking_timeout = Config.FACE_TRACKING_TIMEOUT
         last_scene_recognition_time = 0.0
         
         min_detection_duration = Config.FACE_MIN_DETECTION_DURATION
-        # min_face_area_ratio is not in config, using constant logic or hardcoded
-        min_face_area_ratio = 0.05
-        report_interval = 1.0
+        # Use configured area ratio (default 0.0 means disabled)
+        min_face_area_ratio = Config.FACE_MIN_AREA_RATIO
+        report_interval = Config.FACE_REPORT_INTERVAL
 
         try:
             while True:
@@ -434,13 +432,13 @@ class FaceCapture:
         
         # Tracking config
         iou_threshold = 0.5
-        tracking_timeout = 2.0  # Remove object if not seen for 2s
-        api_interval = 5.0      # Don't call API for same object within 5s
+        tracking_timeout = Config.FACE_TRACKING_TIMEOUT
+        api_interval = Config.FACE_API_INTERVAL
         
         # Quality capture config
-        capture_window = 1.0    # 抓拍窗口期: 1秒
-        min_quality_threshold = 0.65 # 立即抓拍的质量阈值
-        min_accept_threshold = 0.3 # 最低接受阈值 (如果超时了还没达到这个分，就放弃这次抓拍)
+        capture_window = Config.FACE_CAPTURE_WINDOW
+        min_quality_threshold = Config.FACE_MIN_QUALITY_THRESHOLD
+        min_accept_threshold = Config.FACE_MIN_ACCEPT_THRESHOLD
         
         h_frame, w_frame, _ = frame.shape
 

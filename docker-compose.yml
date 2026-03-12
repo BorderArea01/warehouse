@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  warehouse-system:
+    build:
+      context: .
+      dockerfile: Dockerfile.warehouse
+    image: warehouse-system:latest
+    container_name: warehouse-system
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+      # Mount models to persist/update them
+      - ./models:/app/models
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Headless mode for FaceCapture to avoid cv2.imshow errors in container
+      - HEADLESS=true
+    env_file:
+      - .env
+    # network_mode: host is required for RTSP streams and hardware access stability
+    network_mode: host
+    # privileged: true is often needed for USB device access (RFID)
+    privileged: true
+
+  warehouse-admin:
+    # Reuses the same image as warehouse-system since it shares the codebase
+    image: warehouse-system:latest
+    container_name: warehouse-admin
+    restart: unless-stopped
+    # Override the default command to run the admin interface
+    command: python -u -m src.web_admin
+    volumes:
+      - ./logs:/app/logs
+      # Mount .env so the admin panel can read/edit it
+      - ./.env:/app/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - WEB_ADMIN_PORT=13999
+    env_file:
+      - .env
+    # network_mode: host to easily share the port
+    network_mode: host
+
+  feishu-longconnect:
+    build:
+      context: .
+      dockerfile: Dockerfile.feishu
+    image: feishu-longconnect:latest
+    container_name: feishu-longconnect
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    network_mode: host

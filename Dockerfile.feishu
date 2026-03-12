@@ -1,0 +1,16 @@
+# Dockerfile for Feishu Long Connection Script
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the script
+# We copy it to the root of the container workdir for simplicity
+COPY origin_scripts/feishu_card/feishu_longconnect.py .
+
+# Run the script
+# -u: Unbuffered output
+CMD ["python", "-u", "feishu_longconnect.py"]
