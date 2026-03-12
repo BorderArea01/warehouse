@@ -111,8 +111,19 @@ class TimeCapture:
         cap = cv2.VideoCapture(self.rtsp_url)
         if not cap.isOpened():
             logger.error(f"Could not open RTSP stream: {self.rtsp_url}")
-            self.running = False
-            return
+            
+            # Try backup stream if configured
+            backup_url = getattr(Config, "RTSP_URL_BACKUP_BASE", None)
+            if backup_url:
+                logger.info(f"Attempting backup stream: {backup_url}")
+                cap = cv2.VideoCapture(backup_url)
+                if not cap.isOpened():
+                    logger.error("Backup stream also failed.")
+                    self.running = False
+                    return
+            else:
+                self.running = False
+                return
 
         logger.info("Connected to Camera. Listening for exit events...")
 

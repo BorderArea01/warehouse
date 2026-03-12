@@ -42,12 +42,15 @@ class Config:
     RTSP_URL_TIMECAPTURE = os.getenv('RTSP_URL_TIMECAPTURE')
     RTSP_URL_BACKUP_BASE = os.getenv('RTSP_URL_BACKUP_BASE')
 
-    # Face Capture Configuration
+    # Face Recognition Configuration
     FACE_API_URL = os.getenv('FACE_API_URL')
     FACE_CONFIDENCE_THRESHOLD = float(os.getenv('FACE_CONFIDENCE_THRESHOLD')) if os.getenv('FACE_CONFIDENCE_THRESHOLD') else 0.55
     FACE_MIN_DETECTION_DURATION = float(os.getenv('FACE_MIN_DETECTION_DURATION')) if os.getenv('FACE_MIN_DETECTION_DURATION') else 0.6
     
     # Face Tracking & Quality Config
+    FACE_COOLDOWN_DURATION = float(os.getenv('FACE_COOLDOWN_DURATION', '600.0'))
+    FACE_VISITOR_BUFFER_DURATION = float(os.getenv('FACE_VISITOR_BUFFER_DURATION', '10.0'))
+    
     # Minimum face area ratio (face_area / frame_area). Set to 0.0 to disable size filtering.
     FACE_MIN_AREA_RATIO = float(os.getenv('FACE_MIN_AREA_RATIO', '0.0'))
     # Time (seconds) to keep a session alive without seeing a face
@@ -65,8 +68,11 @@ class Config:
     TIME_CONFIDENCE_THRESHOLD = float(os.getenv('TIME_CONFIDENCE_THRESHOLD')) if os.getenv('TIME_CONFIDENCE_THRESHOLD') else 0.6
     TIME_PERSON_TIMEOUT = float(os.getenv('TIME_PERSON_TIMEOUT')) if os.getenv('TIME_PERSON_TIMEOUT') else 15.0
 
-    # Agent Configuration
+    # Agent Integration
     AGENT_BASE_URL = os.getenv('AGENT_BASE_URL')
+    AGENT_WORKFLOW_URL = os.getenv('AGENT_WORKFLOW_URL')
+    AGENT_API_KEY = os.getenv('AGENT_API_KEY')
+    AGENT_WORKFLOW_ID = os.getenv('AGENT_WORKFLOW_ID')
     EMPLOYEE_ID = os.getenv('EMPLOYEE_ID')
     USER_ID = os.getenv('USER_ID')
 

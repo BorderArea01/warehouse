@@ -41,9 +41,12 @@ def list_logs():
     """List logs grouped by date."""
     grouped_files: Dict[str, List[Dict[str, Any]]] = {}
     
+    print(f"Scanning logs in {LOG_DIR}")
     if os.path.exists(LOG_DIR):
         for root, dirs, filenames in os.walk(LOG_DIR):
             for filename in filenames:
+                if filename.startswith('.'): continue # Skip hidden files
+                
                 full_path = os.path.join(root, filename)
                 rel_path = os.path.relpath(full_path, LOG_DIR)
                 
@@ -56,9 +59,11 @@ def list_logs():
                 elif "visit" in filename.lower() or "person" in rel_path.lower() or "face" in filename.lower():
                     category = "Person"
                 
+                print(f"Found log: {rel_path} ({category})")
+                
                 file_info = {
                     "name": filename,
-                    "path": rel_path,
+                    "path": rel_path, # Path relative to LOG_DIR, including subdir if any
                     "category": category,
                     "size": os.path.getsize(full_path)
                 }

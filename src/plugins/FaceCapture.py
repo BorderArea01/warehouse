@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Face Capture Plugin for Warehouse process System (MediaPipe Version).
-人脸捕获插件 (MediaPipe版本)
+人脸捕获插件 (MediaPipe版本) - Simplified Version
 """
 
 import time
@@ -13,7 +13,6 @@ import os
 import sys
 import concurrent.futures
 import threading
-import logging
 import queue
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List, Tuple
@@ -42,7 +41,6 @@ except ImportError:
 
 # Configure logger
 logger = Config.get_logger("FaceCapture")
-# Prevent propagation to root logger to avoid duplicate logs when basicConfig is called elsewhere or by default
 logger.propagate = False
 
 # ================= Face Capture Service =================
@@ -50,10 +48,10 @@ logger.propagate = False
 class FaceCapture:
     """
     Service for detecting persons and recognizing faces.
-    人脸识别与抓拍服务
+    人脸识别与抓拍服务 (Simplified: Direct Detection -> Recognition)
     """
 
-    def __init__(self, model_path: str): # 初始化服务
+    def __init__(self, model_path: str):
         self.face_api_url = Config.FACE_API_URL
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent(module_name="FaceCapture") if ToAgent else None
@@ -63,38 +61,36 @@ class FaceCapture:
         # Configuration
         self.headless = os.environ.get('HEADLESS', 'False').lower() == 'true'
         
-        # State Management
-        self.identified_cooldowns: Dict[str, float] = {}
-        self.person_states: Dict[str, Dict] = {}
+        # Cooldown State Management
+        # user_id -> timestamp (Per-user cooldown)
+        self.user_cooldowns: Dict[str, float] = {}
+        # timestamp (Global visitor cooldown)
+        self.visitor_cooldown_until: float = 0.0
+        
+        # Visitor Buffer Logic
+        # (timestamp, record)
+        self.pending_visitor_report: Optional[Tuple[float, Dict]] = None
+        self.visitor_buffer_lock = threading.Lock()
+        self.visitor_buffer_duration = Config.FACE_VISITOR_BUFFER_DURATION # Wait to see if user appears
+        
         self.state_lock = threading.Lock()
         
-        # Thread Pool
+        # Thread Pool for Recognition
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
         self._inflight_lock = threading.Lock()
         self._inflight_tasks = 0
-        self._max_inflight_tasks = 6
-        self._open_user_cache = set()
-        self._open_cache_last_refresh = 0.0
-        self._open_cache_refresh_interval = 5.0
-        self._open_cache_day = None
+        self._max_inflight_tasks = 4  # Limit concurrent API calls
         
         # Resources
         self.cap = None
         self.detector = None
 
         # Frame Queue
-        self.frame_queue = queue.Queue(maxsize=3)
+        self.frame_queue = queue.Queue(maxsize=2) # Keep it small for realtime
         self.stop_event = threading.Event()
         self.capture_thread = None
 
-        # Simple Tracker State
-        self.tracked_objects = []  # List of dict: {'bbox': [x1,y1,x2,y2], 'last_seen': time, 'last_api_time': time, 'id': str}
-        self.tracker_lock = threading.Lock()
-        
-        # Load initial state
-        self._load_open_user_cache()
-
-    def _init_detector(self): # 初始化 MediaPipe 检测器
+    def _init_detector(self):
         """Initialize MediaPipe Object Detector."""
         if self.detector:
             return
@@ -114,32 +110,44 @@ class FaceCapture:
             logger.critical(f"Failed to load MediaPipe model: {e}")
             sys.exit(1)
 
-    def _initialize_camera(self): # 初始化摄像头
-        self.cap = cv2.VideoCapture(0)
+    def _initialize_camera(self):
+        """
+        初始化摄像头。
+        优先尝试打开 /dev/video0 (USB摄像头)。
+        使用 V4L2 后端，并强制使用 MJPG 格式以支持高分辨率。
+        """
+        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        
         if not self.cap.isOpened():
-            logger.error("Could not open camera 0.")
-            return False
+            logger.warning("Failed to open camera 0 with V4L2. Trying default backend...")
+            self.cap = cv2.VideoCapture(0)
             
+        if not self.cap.isOpened():
+            logger.error("Could not open camera 0 (USB Camera). Please check connection and permissions.")
+            return False
+        
+        # 强制使用 MJPG 格式 (对于 1080P USB 摄像头通常必须)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
         
         if not self.headless:
             if not os.environ.get('DISPLAY'):
+                logger.info("No DISPLAY environment variable found. Switching to Headless mode.")
                 self.headless = True
             else:
                 try:
-                    # Test display
                     cv2.imshow("Test", np.zeros((10, 10, 3), dtype=np.uint8))
                     cv2.destroyWindow("Test")
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Display test failed ({e}). Switching to Headless mode.")
                     self.headless = True
         return True
 
-    def _capture_loop(self): # 摄像头采集线程
+    def _capture_loop(self):
         """Thread function to continuously capture frames."""
         logger.info("Starting Camera Capture Thread...")
         
-        # Initialize camera
         if not self._initialize_camera():
              logger.error("Initial camera setup failed in capture thread.")
         
@@ -172,7 +180,6 @@ class FaceCapture:
             
             read_fail_count = 0
             
-            # Put frame to queue, drop oldest if full
             if self.frame_queue.full():
                 try:
                     self.frame_queue.get_nowait()
@@ -189,38 +196,24 @@ class FaceCapture:
             self.cap.release()
             self.cap = None
 
-    def process(self): # 启动主处理流程循环
+    def process(self):
         """Start the main process loop."""
-        logger.debug("Starting FaceCapture Process Service...")
+        logger.debug("Starting FaceCapture Process Service (Simplified Mode)...")
         
         self._init_detector()
 
-        # Start capture thread
         self.stop_event.clear()
         self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.capture_thread.start()
 
-        # Loop State
-        is_tracking = False
-        session_report_count = 0
-        session_start_time = None
-        last_seen_time = 0.0
-        
-        # Debounce & Tracking Config
-        tracking_timeout = Config.FACE_TRACKING_TIMEOUT
-        last_scene_recognition_time = 0.0
-        
-        min_detection_duration = Config.FACE_MIN_DETECTION_DURATION
-        # Use configured area ratio (default 0.0 means disabled)
-        min_face_area_ratio = Config.FACE_MIN_AREA_RATIO
-        report_interval = Config.FACE_REPORT_INTERVAL
-
         try:
             while True:
                 try:
-                    # Get frame from queue
+                    # Check pending visitor reports
+                    self._check_pending_visitor()
+
                     try:
-                        frame = self.frame_queue.get(timeout=1.0)
+                        frame = self.frame_queue.get(timeout=0.1) # Reduced timeout to check pending visitors often
                     except queue.Empty:
                         continue
                     
@@ -233,78 +226,51 @@ class FaceCapture:
                     detection_result = self.detector.detect(mp_image)
                     detections = detection_result.detections
                     
-                    valid_detections = []
-                    frame_area = float(frame.shape[0] * frame.shape[1])
-                    person_detected_now = False
-
-                    # First pass: collect valid detections
+                    valid_crops = []
+                    
+                    # Process detections
                     for detection in detections:
                         bbox = detection.bounding_box
                         x1 = int(bbox.origin_x)
                         y1 = int(bbox.origin_y)
-                        w_box = int(bbox.width)
-                        h_box = int(bbox.height)
-                        x2 = x1 + w_box
-                        y2 = y1 + h_box
+                        w = int(bbox.width)
+                        h = int(bbox.height)
+                        x2 = x1 + w
+                        y2 = y1 + h
                         
                         score = detection.categories[0].score
 
-                        box_area = w_box * h_box
-                        if box_area / frame_area < min_face_area_ratio:
-                            if not self.headless:
-                                cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
+                        # Minimal size check to avoid noise (optional, keep very loose)
+                        if w < 20 or h < 20:
                             continue
 
-                        person_detected_now = True
-                        valid_detections.append((x1, y1, x2, y2, float(score)))
+                        # Crop face
+                        crop_img = self._crop_image(frame, (x1, y1, x2, y2))
+                        valid_crops.append((crop_img, score, (x1, y1, x2, y2)))
 
-                    # Process detections (with CLEAN frame)
-                    if person_detected_now:
-                        last_seen_time = current_time
-                        
-                        if not is_tracking:
-                            if not is_potential_entry:
-                                is_potential_entry = True
-                                potential_start_time = current_time
-                            else:
-                                if current_time - potential_start_time >= min_detection_duration:
-                                    is_tracking = True
-                                    session_report_count = 0
-                                    is_potential_entry = False
-                                    session_start_time = datetime.now(self.bj_tz)
-                                    
-                                    self.process_frame(frame, current_time, detections=valid_detections)
-                                    session_report_count += 1
-                        else:
-                            if current_time - last_scene_recognition_time >= report_interval:
-                                self.process_frame(frame, current_time, detections=valid_detections)
-                                last_scene_recognition_time = current_time
-                                session_report_count += 1
-                    else:
-                        if is_potential_entry:
-                            is_potential_entry = False
-                            
-                        if is_tracking:
-                            if current_time - last_seen_time > tracking_timeout:
-                                session_start_str = session_start_time.strftime("%Y-%m-%d %H:%M:%S")
-                                logger.info(f"Session ended. Started at {session_start_str}")
-                                is_tracking = False
-
-                    # Second pass: draw debug info (on frame that is now safe to modify)
-                    if not self.headless:
-                        for det in valid_detections:
-                            x1, y1, x2, y2, score = det
+                        # Draw debug box
+                        if not self.headless:
                             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                            cv2.putText(frame, f"Person {score:.2f}", (x1, y1 - 10), 
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                                       
-                        self._draw_debug_info(frame, current_time)
+
+                    # Submit tasks
+                    for (crop_img, conf, bbox) in valid_crops:
+                        with self._inflight_lock:
+                            if self._inflight_tasks >= self._max_inflight_tasks:
+                                continue # Skip if busy
+                            self._inflight_tasks += 1
+                        
+                        self.executor.submit(
+                            self.recognize_task, crop_img, current_time, conf
+                        )
+
+                    # Display debug info
+                    if not self.headless:
                         cv2.imshow('FaceCapture Process', frame)
                         if cv2.waitKey(1) & 0xFF == ord('q'):
                             break
+                            
                 except Exception as e:
                     logger.error(f"process Loop Error: {e}")
-                    # time.sleep(0.1)
                         
         except KeyboardInterrupt:
             logger.info("Stopping process...")
@@ -313,7 +279,6 @@ class FaceCapture:
             if self.capture_thread:
                 self.capture_thread.join(timeout=2.0)
             
-            # Double check resource release
             if self.cap:
                 self.cap.release()
                 self.cap = None
@@ -325,255 +290,35 @@ class FaceCapture:
             self.detector = None
             cv2.destroyAllWindows()
 
-    def _cleanup_cooldowns(self, current_time: float): # 清理过期的冷却状态
-        expired = [uid for uid, ts in self.identified_cooldowns.items() if current_time > ts]
-        for uid in expired:
-            del self.identified_cooldowns[uid]
-
-    def _draw_debug_info(self, frame, current_time: float): # 绘制调试信息
-        y_off = 30
-        for uid, ts in self.identified_cooldowns.items():
-            rem = int(ts - current_time)
-            cv2.putText(frame, f"Cooldown {uid}: {rem}s", (10, y_off), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-            y_off += 20
-
-    def _calculate_iou(self, boxA, boxB): # 计算两个框的重叠率 (IOU)
-        # determine the (x, y)-coordinates of the intersection rectangle
-        xA = max(boxA[0], boxB[0])
-        yA = max(boxA[1], boxB[1])
-        xB = min(boxA[2], boxB[2])
-        yB = min(boxA[3], boxB[3])
-
-        # compute the area of intersection rectangle
-        interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
-
-        # compute the area of both the prediction and ground-truth rectangles
-        boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
-        boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
-
-        # compute the intersection over union by taking the intersection
-        # area and dividing it by the sum of prediction + ground-truth
-        # areas - the interesection area
-        iou = interArea / float(boxAArea + boxBArea - interArea)
-
-        # return the intersection over union value
-        return iou
-
-    def _calculate_quality_score(self, bbox, frame_w, frame_h, crop_img=None):
-        """
-        计算抓拍质量分数 (0.0 - 1.0)
-        基于:
-        1. 面积占比 (越大越好)
-        2. 中心偏移 (越居中越好)
-        3. 清晰度 (越清晰越好)
-        4. 亮度 (适中最好)
-        """
-        x1, y1, x2, y2 = bbox
-        w = x2 - x1
-        h = y2 - y1
+    def _check_pending_visitor(self):
+        """Check if any pending visitor report should be sent."""
+        current_time = time.time()
+        to_report = None
         
-        # 1. 面积分数 (Area Score)
-        # 假设人脸/人体占比达到画面 50% 算满分，太小分数低 (稍微放宽一点，因为Laplacian需要像素支撑)
-        area = w * h
-        frame_area = frame_w * frame_h
-        area_ratio = area / frame_area
-        area_score = min(1.0, area_ratio / 0.5)
+        with self.visitor_buffer_lock:
+            if self.pending_visitor_report:
+                ts, record = self.pending_visitor_report
+                if current_time - ts > self.visitor_buffer_duration:
+                    to_report = record
+                    self.pending_visitor_report = None
         
-        # 2. 中心分数 (Center Score)
-        cx = (x1 + x2) / 2
-        cy = (y1 + y2) / 2
-        frame_cx = frame_w / 2
-        frame_cy = frame_h / 2
-        
-        dx = abs(cx - frame_cx) / (frame_w / 2)
-        dy = abs(cy - frame_cy) / (frame_h / 2)
-        dist = (dx + dy) / 2
-        center_score = max(0.0, 1.0 - dist)
-
-        # 3. 图像质量 (Image Quality)
-        blur_score = 0.0
-        bright_score = 0.0
-        
-        if crop_img is not None and crop_img.size > 0:
-            gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
-            
-            # 清晰度 (Laplacian Variance)
-            # 一般来说 > 100 算清晰，< 50 算模糊
-            blur_val = cv2.Laplacian(gray, cv2.CV_64F).var()
-            blur_score = min(1.0, max(0.0, (blur_val - 50) / 300))
-            
-            # 亮度 (Brightness)
-            # 理想亮度在 80-180 之间
-            mean_val = np.mean(gray)
-            if 80 <= mean_val <= 180:
-                bright_score = 1.0
-            else:
-                # 偏离越远分数越低
-                if mean_val < 80:
-                    bright_score = max(0.0, mean_val / 80)
-                else:
-                    bright_score = max(0.0, (255 - mean_val) / 75)
-        
-        # 综合分数: 
-        # 面积: 0.4 (保证大小)
-        # 中心: 0.1 (位置次要)
-        # 清晰度: 0.3 (拒绝模糊)
-        # 亮度: 0.2 (拒绝逆光/过暗)
-        final_score = (area_score * 0.4) + (center_score * 0.1) + (blur_score * 0.3) + (bright_score * 0.2)
-        
-        return final_score
-
-    def process_frame(self, frame: np.ndarray, current_time: float, 
-                                   detections: List[Tuple] = None): # 处理帧中的人脸: 裁剪、追踪并识别
-        """Process detected persons: crop and recognize with tracking."""
-        bj_time = datetime.now(self.bj_tz)
-        targets_to_process = []
-        
-        # Tracking config
-        iou_threshold = 0.5
-        tracking_timeout = Config.FACE_TRACKING_TIMEOUT
-        api_interval = Config.FACE_API_INTERVAL
-        
-        # Quality capture config
-        capture_window = Config.FACE_CAPTURE_WINDOW
-        min_quality_threshold = Config.FACE_MIN_QUALITY_THRESHOLD
-        min_accept_threshold = Config.FACE_MIN_ACCEPT_THRESHOLD
-        
-        h_frame, w_frame, _ = frame.shape
-
-        # Update tracked objects
-        with self.tracker_lock:
-            # 1. Clean up stale objects
-            self.tracked_objects = [
-                obj for obj in self.tracked_objects 
-                if current_time - obj['last_seen'] < tracking_timeout
-            ]
-            
-            # 2. Match detections to existing objects
-            matched_indices = set()
-            
-            if detections:
-                for det in detections:
-                    bbox = det[:4] # x1, y1, x2, y2
-                    conf = det[4]
-                    
-                    best_iou = 0.0
-                    best_obj_idx = -1
-                    
-                    for idx, obj in enumerate(self.tracked_objects):
-                        if idx in matched_indices:
-                            continue
-                        iou = self._calculate_iou(bbox, obj['bbox'])
-                        if iou > best_iou:
-                            best_iou = iou
-                            best_obj_idx = idx
-                    
-                    # 裁剪图像用于计算质量
-                    current_crop = self._crop_image(frame, bbox)
-                    quality_score = self._calculate_quality_score(bbox, w_frame, h_frame, current_crop)
-                    
-                    if best_iou > iou_threshold:
-                        # Matched existing object
-                        obj = self.tracked_objects[best_obj_idx]
-                        obj['bbox'] = bbox
-                        obj['last_seen'] = current_time
-                        matched_indices.add(best_obj_idx)
-                        
-                        # Check capture state
-                        state = obj.get('state', 'detecting')
-                        
-                        if state == 'captured':
-                            # Already captured, check for re-capture timeout
-                            if current_time - obj.get('last_api_time', 0.0) > api_interval:
-                                # Reset for re-capture
-                                obj['state'] = 'detecting'
-                                obj['capture_start_time'] = current_time
-                                obj['best_score'] = quality_score
-                                obj['best_crop'] = current_crop
-                                obj['best_crop_conf'] = conf
-                        
-                        elif state == 'detecting':
-                            # In capture window, update best shot
-                            if quality_score > obj.get('best_score', -1.0):
-                                obj['best_score'] = quality_score
-                                obj['best_crop'] = current_crop
-                                obj['best_crop_conf'] = conf
-                            
-                            time_elapsed = current_time - obj.get('capture_start_time', current_time)
-                            
-                            # Trigger capture if:
-                            # 1. Quality is excellent (immediate capture)
-                            # 2. Capture window expired (timeout capture)
-                            should_capture = False
-                            
-                            if quality_score >= min_quality_threshold:
-                                should_capture = True
-                                logger.info(f"High quality capture triggered (Score: {quality_score:.2f})")
-                            elif time_elapsed >= capture_window:
-                                best_score_so_far = obj.get('best_score', 0.0)
-                                if best_score_so_far >= min_accept_threshold:
-                                    should_capture = True
-                                    logger.info(f"Capture window expired, using best shot (Score: {best_score_so_far:.2f})")
-                                else:
-                                    # Quality too low, reset window and keep waiting
-                                    # logger.debug(f"Quality too low ({best_score_so_far:.2f}), waiting for better shot...")
-                                    obj['capture_start_time'] = current_time # Reset timer
-                                    # Don't reset best_score completely, keep trying to beat it
-                            
-                            if should_capture:
-                                best_crop = obj.get('best_crop')
-                                best_conf = obj.get('best_crop_conf', conf)
-                                
-                                if best_crop is not None and best_crop.size > 0:
-                                    targets_to_process.append((best_crop, best_conf, best_obj_idx))
-                                    obj['state'] = 'captured'
-                                    obj['last_api_time'] = current_time
-                                    # Clear memory
-                                    obj.pop('best_crop', None)
-
-                    else:
-                        # New object
-                        new_obj = {
-                            'bbox': bbox,
-                            'last_seen': current_time,
-                            'last_api_time': 0.0,
-                            'state': 'detecting',
-                            'capture_start_time': current_time,
-                            'best_score': quality_score,
-                            'best_crop': current_crop,
-                            'best_crop_conf': conf
-                        }
-                        self.tracked_objects.append(new_obj)
-                        # Don't capture immediately unless quality is super high
-                        if quality_score >= min_quality_threshold:
-                            targets_to_process.append((new_obj['best_crop'], conf, len(self.tracked_objects)-1))
-                            new_obj['state'] = 'captured'
-                            new_obj['last_api_time'] = current_time
-                            new_obj.pop('best_crop', None)
-
-        if not targets_to_process:
-            return
-
-        logger.debug(f"Async processing {len(targets_to_process)} target(s)...")
-
-        for (crop_img, conf, tracker_idx) in targets_to_process:
-            if crop_img is None or crop_img.size == 0:
-                continue
-
-            with self._inflight_lock:
-                if self._inflight_tasks >= self._max_inflight_tasks:
-                    continue
-                self._inflight_tasks += 1
-            
-            self.executor.submit(
-                self.recognize_task, crop_img.copy(), current_time, bj_time, tracker_idx, conf
-            )
+        if to_report:
+            # Re-check cooldown just in case
+            with self.state_lock:
+                if current_time < self.visitor_cooldown_until:
+                    return
+                # Update cooldown
+                self.visitor_cooldown_until = current_time + Config.FACE_COOLDOWN_DURATION
+                
+            logger.info(f"Reporting Buffered Visitor: {to_report.get('person_name')}")
+            self.save_logs(to_report)
+            self.send_to_agent(to_report)
 
     def _crop_image(self, frame, bbox):
         x1, y1, x2, y2 = bbox
         h, w, _ = frame.shape
         
+        # Add slight padding
         pad_x = int((x2 - x1) * 0.1)
         pad_y = int((y2 - y1) * 0.1)
         crop_x1 = max(0, x1 - pad_x)
@@ -583,9 +328,12 @@ class FaceCapture:
         
         return frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
 
-    def recognize_task(self, img_to_send, current_time, bj_time, img_idx, conf): # 异步识别任务
+    def recognize_task(self, img_to_send, current_time, conf):
+        """Async recognition task."""
         try:
-            result = self.recognize(img_to_send, bj_time, suffix=f"_{img_idx}")
+            bj_time = datetime.now(self.bj_tz)
+            result = self.recognize(img_to_send, bj_time)
+            
             if not result:
                 return
 
@@ -599,30 +347,18 @@ class FaceCapture:
                     user_id = str(data.get("userId", "unknown"))
                     nick_name = data.get("nickName", "Unknown")
                     user_type = data.get("userType", "Unknown")
-            else:
-                logger.warning(f"API returned non-200 or invalid format: {result}")
-
+            
+            # Check for invalid ID
             if self._should_ignore_user(user_id, nick_name, user_type):
                 return
 
-            with self.state_lock:
-                in_cooldown = user_id in self.identified_cooldowns
-            
-            if in_cooldown:
-                return 
-
-            # Check visitor status
+            # Check Cooldowns
             is_visitor = "游客" in nick_name or "visitor" in nick_name.lower() or "游客" in user_type or "visitor" in user_type.lower()
             
-            if is_visitor:
-                print(f"[Visitor] Detected: {nick_name} ({user_id})")
-                with self.state_lock:
-                    self._update_person_state(user_id, nick_name, current_time, result, bj_time, conf, image_url="无")
-                return
-
-            logger.info(f"Recognized: {nick_name} ({user_id})")
-
-            # Upload Image to MinIO
+            cooldown_duration = Config.FACE_COOLDOWN_DURATION
+            
+            # Prepare Record (without sending yet)
+            # Upload Image First? Ideally yes, so we have the URL ready
             image_url = "无"
             if self.uploader:
                 try:
@@ -638,12 +374,52 @@ class FaceCapture:
                     
                     if temp_path.exists():
                         temp_path.unlink()
-                        
                 except Exception as e:
                     logger.error(f"Image Upload Failed: {e}")
 
-            with self.state_lock:
-                self._update_person_state(user_id, nick_name, current_time, result, bj_time, conf, image_url)
+            record = {
+                "start_time": bj_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "face_result": result,
+                "person_name": nick_name,
+                "event_type": "realtime_identification",
+                "confidence": float(conf),
+                "user_id": user_id,
+                "image_url": image_url
+            }
+
+            if is_visitor:
+                # Visitor Logic: Buffer it
+                with self.state_lock:
+                     # If already cooled down, we can CONSIDER buffering
+                     if current_time < self.visitor_cooldown_until:
+                         return
+                
+                with self.visitor_buffer_lock:
+                    # Update buffer with latest visitor detection
+                    # We don't send immediately. We wait.
+                    self.pending_visitor_report = (current_time, record)
+                    logger.debug(f"Buffered Visitor: {nick_name}, waiting {self.visitor_buffer_duration}s...")
+                return
+
+            else:
+                # User Logic: Immediate Report + Clear Visitor Buffer
+                with self.state_lock:
+                    user_unlock_time = self.user_cooldowns.get(user_id, 0.0)
+                    if current_time < user_unlock_time:
+                        return
+                    
+                    # It's a valid new User entry
+                    self.user_cooldowns[user_id] = current_time + cooldown_duration
+                
+                # Clear any pending visitor report (Prioritize User)
+                with self.visitor_buffer_lock:
+                    if self.pending_visitor_report:
+                        logger.info("Discarding buffered visitor report due to User detection.")
+                        self.pending_visitor_report = None
+
+                logger.info(f"Reporting User: {nick_name} ({user_id})")
+                self.save_logs(record)
+                self.send_to_agent(record)
 
         except Exception as e:
             logger.error(f"Async Task Error: {e}")
@@ -651,126 +427,19 @@ class FaceCapture:
             with self._inflight_lock:
                 self._inflight_tasks = max(0, self._inflight_tasks - 1)
 
-    def _should_ignore_user(self, user_id: str, nick_name: str, user_type: str) -> bool: # 检查是否忽略该用户(无效ID或名字)
+    def _cleanup_cooldowns(self, current_time: float):
+        """Cleanup expired user cooldowns to save memory."""
+        with self.state_lock:
+            expired = [uid for uid, ts in self.user_cooldowns.items() if current_time > ts]
+            for uid in expired:
+                del self.user_cooldowns[uid]
+
+    def _should_ignore_user(self, user_id: str, nick_name: str, user_type: str) -> bool:
         if not user_id or user_id.lower() in ["unknown", "none", ""] or not nick_name:
             return True
-            
         return False
 
-    def _update_person_state(self, user_id, nick_name, current_time, face_result, bj_time, conf, image_url="无"): # 更新人员状态(冷却、上报)
-        is_visitor = "游客" in nick_name or "visitor" in nick_name.lower()
-        if not is_visitor and isinstance(face_result, dict):
-            u_type = face_result.get("data", {}).get("userType", "")
-            if "游客" in u_type or "visitor" in u_type.lower():
-                is_visitor = True
-        
-        cooldown_duration = 1.0 if is_visitor else 5.0
-        
-        state = self.person_states.get(user_id, {'cooldown_until': 0.0})
-        
-        if current_time < state['cooldown_until']:
-            return
-
-        if self._is_user_already_in(user_id):
-            logger.info(f"User {nick_name} is already in warehouse (Open Record). Skipping new entry log.")
-            state['cooldown_until'] = current_time + cooldown_duration
-            self.identified_cooldowns[user_id] = state['cooldown_until']
-            self.person_states[user_id] = state
-            return
-
-        if is_visitor:
-            # For visitors, we already printed in terminal. Just update cooldown and exit.
-            state['cooldown_until'] = current_time + cooldown_duration
-            self.identified_cooldowns[user_id] = state['cooldown_until']
-            self.person_states[user_id] = state
-            return
-
-        logger.info(f"Reporting Entry: {nick_name} (Cooldown: {cooldown_duration}s)")
-        
-        record = {
-            "start_time": bj_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "face_result": face_result,
-            "person_name": nick_name,
-            "event_type": "realtime_identification",
-            "confidence": float(conf),
-            "user_id": user_id,
-            "image_url": image_url
-        }
-        
-        self.save_logs(record)
-        self.send_to_agent(record)
-        
-        # Add to in-memory cache to avoid reading file next time
-        self._open_user_cache.add(str(user_id))
-        
-        state['cooldown_until'] = current_time + cooldown_duration
-        self.identified_cooldowns[user_id] = state['cooldown_until']
-        self.person_states[user_id] = state
-
-    def _is_user_already_in(self, user_id: str) -> bool: # 检查用户是否已经在场内 (基于日志文件)
-        self._check_day_rollover()
-        
-        # Reload cache periodically to sync with TimeCapture updates
-        current_time = time.time()
-        if current_time - self._open_cache_last_refresh > self._open_cache_refresh_interval:
-            self._load_open_user_cache(silent=True)
-            self._open_cache_last_refresh = current_time
-            
-        return str(user_id) in self._open_user_cache
-
-    def _check_day_rollover(self): # 检查日期变更，重置缓存
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        if self._open_cache_day != today_str:
-            self._open_user_cache = set()
-            self._open_cache_day = today_str
-            self._load_open_user_cache(silent=False) # Reload for new day (likely empty)
-
-    def _load_open_user_cache(self, silent: bool = False): # 加载今日已入场用户
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        self._open_cache_day = today_str
-        
-        log_dir = os.path.join(Config.PROJECT_ROOT, 'logs', 'person')
-        file_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
-        
-        if not os.path.exists(file_path):
-            self._open_user_cache = set()
-            return
-
-        if not silent:
-            logger.info(f"Loading open user cache from {file_path}...")
-        
-        open_map = {}
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                        
-                    rec_uid = rec.get("user_id")
-                    if not rec_uid:
-                        face_res = rec.get("face_result", {})
-                        if isinstance(face_res, dict) and face_res.get("code") == 200:
-                            rec_uid = str(face_res.get("data", {}).get("userId", ""))
-                    
-                    if not rec_uid:
-                        continue
-                        
-                    if rec.get("event_type") == "completed_visit" or rec.get("end_time"):
-                        open_map[str(rec_uid)] = False
-                    else:
-                        open_map[str(rec_uid)] = True
-            
-            self._open_user_cache = {uid for uid, opened in open_map.items() if opened}
-            if not silent:
-                logger.info(f"Loaded {len(self._open_user_cache)} users currently in warehouse.")
-            
-        except Exception as e:
-            logger.error(f"Error loading open user cache: {e}")
-            self._open_user_cache = set()
-
-    def recognize(self, frame, timestamp: datetime, suffix="") -> Optional[Dict[str, Any]]: # 调用人脸识别API
+    def recognize(self, frame, timestamp: datetime, suffix="") -> Optional[Dict[str, Any]]:
         try:
             filename = timestamp.strftime(f"%Y%m%d-%H%M%S_face{suffix}.jpg")
             success, encoded_img = cv2.imencode('.jpg', frame)
@@ -779,7 +448,7 @@ class FaceCapture:
                 return None
             
             files = {'file': (filename, encoded_img.tobytes(), 'image/jpeg')}
-            response = requests.post(self.face_api_url, files=files, timeout=30)
+            response = requests.post(self.face_api_url, files=files, timeout=10) # Reduced timeout for responsiveness
             
             try:
                 return response.json()
@@ -789,24 +458,15 @@ class FaceCapture:
             logger.error(f"API Request Error: {e}")
             return None
 
-    def send_to_agent(self, record: Dict[str, Any]): # 发送数据到 Agent (Workflow)
+    def send_to_agent(self, record: Dict[str, Any]):
         if not self.to_agent:
             return
 
         try:
             start_t = record.get('start_time')
             face_res = record.get('face_result', {})
-            conf = record.get('confidence', 0.95)
             img_url = record.get('image_url', '无')
             
-            start_str = start_t
-            try:
-                if 'T' in start_str:
-                    s_dt = datetime.fromisoformat(start_str)
-                    start_str = s_dt.strftime("%Y-%m-%d %H:%M:%S")
-            except (ValueError, TypeError):
-                pass
-                
             user_id = "Unknown"
             nick_name = "Unknown"
             if isinstance(face_res, dict) and face_res.get("code") == 200:
@@ -814,12 +474,11 @@ class FaceCapture:
                 user_id = data.get("userId", "Unknown")
                 nick_name = data.get("nickName", "Unknown")
 
-            api_url = "http://192.168.11.24:8088/open/workflow/execute"
+            api_url = Config.AGENT_WORKFLOW_URL
             headers = {
-                "X-API-Key": "wf_6356a9907849423ba0d3c5510c60f64a",
+                "X-API-Key": Config.AGENT_API_KEY,
                 "User-Agent": "Apifox/1.0.0 (https://apifox.com)",
                 "Content-Type": "application/json",
-                "Host": "192.168.11.24:8088",
                 "Connection": "keep-alive"
             }
 
@@ -831,7 +490,7 @@ class FaceCapture:
             }
 
             payload = {
-                "workflowId": "2027306314434215938",
+                "workflowId": Config.AGENT_WORKFLOW_ID,
                 "inputs": inputs
             }
 
@@ -873,7 +532,7 @@ class FaceCapture:
         except Exception as e:
             logger.error(f"Error sending to Agent: {e}")
 
-    def save_logs(self, record: Dict[str, Any]): # 保存本地 JSON 日志
+    def save_logs(self, record: Dict[str, Any]):
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
             log_dir = os.path.join(Config.PROJECT_ROOT, 'logs', 'person')
@@ -887,20 +546,13 @@ class FaceCapture:
             logger.error(f"Error saving local JSON: {e}")
 
 if __name__ == "__main__":
-    # 日志已由 Config.get_logger 配置，无需 basicConfig
-    # 只需要确保 logger 正常工作
-    
-    # 确保模型路径正确
-    # 假设模型文件在项目根目录的 models 文件夹下
     model_path = os.path.join(Config.PROJECT_ROOT, "models", "efficientdet_lite0.tflite")
     
     if not os.path.exists(model_path):
         logger.error(f"Model not found at {model_path}. Please check the path.")
-        # 尝试使用默认路径或者提示用户下载
-        # 这里为了演示，假设用户已经放置了模型文件
         sys.exit(1)
         
-    logger.info(f"Starting FaceCapture with model: {model_path}")
+    logger.info(f"Starting FaceCapture (Simplified) with model: {model_path}")
     
     try:
         face_capture = FaceCapture(model_path=model_path)
@@ -909,4 +561,3 @@ if __name__ == "__main__":
         logger.info("FaceCapture stopped by user.")
     except Exception as e:
         logger.critical(f"FaceCapture crashed: {e}")
-
