@@ -293,7 +293,7 @@ class AssetScanning:
 
     def _log_asset_event(self, tag_data: Dict[str, Any], event_type: str):
         """Append event to daily JSONL log."""
-        # Use UTC+8 for consistency with other modules
+        # 使用 UTC+8 时区以保持与其他模块一致
         bj_tz = timezone(timedelta(hours=8))
         now = datetime.now(bj_tz)
         today_str = now.strftime("%Y-%m-%d")
@@ -302,11 +302,11 @@ class AssetScanning:
         
         epc = tag_data.get('epc')
         
-        # Deduplication logic is removed for online/offline events to capture all raw changes
+        # 为了捕获所有原始变动，此处不进行去重逻辑
         
-        # Event time (when it happened)
+        # 事件发生时间
         event_ts = tag_data.get('timestamp', time.time())
-        # Convert timestamp to UTC+8 datetime
+        # 将时间戳转换为 UTC+8
         event_dt = datetime.fromtimestamp(event_ts, bj_tz)
         
         record = {

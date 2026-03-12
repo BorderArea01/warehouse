@@ -219,15 +219,18 @@
                     loadingContent.value = true;
                     logContent.value = '';
                     try {
-                        const res = await fetch(`/api/logs/${path}`);
+                        // Encode path to handle subdirectories
+                        const res = await fetch(`/api/logs/${encodeURIComponent(path)}`);
                         const data = await res.json();
                         logContent.value = data.content;
                         
                         // Scroll to bottom
                         nextTick(() => {
-                            if (logContainer.value) {
-                                logContainer.value.scrollTop = logContainer.value.scrollHeight;
-                            }
+                            setTimeout(() => {
+                                if (logContainer.value) {
+                                    logContainer.value.scrollTop = logContainer.value.scrollHeight;
+                                }
+                            }, 50); // Small delay to ensure rendering
                         });
                     } catch (e) {
                         logContent.value = `Error loading log: ${e.message}`;

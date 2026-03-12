@@ -26,6 +26,12 @@ class ToAgent:
         business_params: Optional[Dict[str, Any]] = None,
         timeout: int = 30,
     ) -> Dict[str, Any]:
+        """
+        调用 Agent 接口
+        :param query: 查询语句
+        :param business_params: 业务参数
+        :param timeout: 超时时间
+        """
         payload = {
             "employeeId": self.employee_id,
             "userId": self.user_id,
