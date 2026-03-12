@@ -12,3 +12,6 @@ requests-toolbelt==1.0.0
 typing_extensions==4.15.0
 urllib3==2.6.3
 websockets==16.0
+fastapi==0.135.1
+python-multipart==0.0.22
+uvicorn==0.41.0

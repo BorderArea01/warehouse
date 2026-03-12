@@ -47,6 +47,20 @@ class Config:
     FACE_CONFIDENCE_THRESHOLD = float(os.getenv('FACE_CONFIDENCE_THRESHOLD')) if os.getenv('FACE_CONFIDENCE_THRESHOLD') else 0.55
     FACE_MIN_DETECTION_DURATION = float(os.getenv('FACE_MIN_DETECTION_DURATION')) if os.getenv('FACE_MIN_DETECTION_DURATION') else 0.6
     
+    # Face Tracking & Quality Config
+    # Minimum face area ratio (face_area / frame_area). Set to 0.0 to disable size filtering.
+    FACE_MIN_AREA_RATIO = float(os.getenv('FACE_MIN_AREA_RATIO', '0.0'))
+    # Time (seconds) to keep a session alive without seeing a face
+    FACE_TRACKING_TIMEOUT = float(os.getenv('FACE_TRACKING_TIMEOUT', '5.0'))
+    # Interval (seconds) to report/recognize faces during a continuous tracking session
+    FACE_REPORT_INTERVAL = float(os.getenv('FACE_REPORT_INTERVAL', '1.0'))
+    
+    # Face Quality & Capture
+    FACE_CAPTURE_WINDOW = float(os.getenv('FACE_CAPTURE_WINDOW', '0.5')) # Reduced capture window
+    FACE_MIN_QUALITY_THRESHOLD = float(os.getenv('FACE_MIN_QUALITY_THRESHOLD', '0.5')) # Relaxed quality
+    FACE_MIN_ACCEPT_THRESHOLD = float(os.getenv('FACE_MIN_ACCEPT_THRESHOLD', '0.1')) # Very relaxed acceptance
+    FACE_API_INTERVAL = float(os.getenv('FACE_API_INTERVAL', '2.0')) # Reduced API cooldown
+    
     # Time Capture
     TIME_CONFIDENCE_THRESHOLD = float(os.getenv('TIME_CONFIDENCE_THRESHOLD')) if os.getenv('TIME_CONFIDENCE_THRESHOLD') else 0.6
     TIME_PERSON_TIMEOUT = float(os.getenv('TIME_PERSON_TIMEOUT')) if os.getenv('TIME_PERSON_TIMEOUT') else 15.0
@@ -81,7 +95,17 @@ class Config:
         if not logger.handlers:
             logger.setLevel(logging.INFO)
             # Standardize logging format to YYYY-MM-DD HH:MM:SS
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+            # Use a custom formatter to force UTC+8
+            class BeijingFormatter(logging.Formatter):
+                def formatTime(self, record, datefmt=None):
+                    from datetime import datetime, timedelta, timezone
+                    bj_tz = timezone(timedelta(hours=8))
+                    dt = datetime.fromtimestamp(record.created, bj_tz)
+                    if datefmt:
+                        return dt.strftime(datefmt)
+                    return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+            formatter = BeijingFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
             
             # Stream Handler
             ch = logging.StreamHandler(sys.stdout)
@@ -101,5 +125,5 @@ class Config:
             )
             fh.setFormatter(formatter)
             logger.addHandler(fh)
-            
+        
         return logger

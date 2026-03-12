@@ -1,0 +1,11 @@
+# Ignore large files and directories not needed for build
+captured_faces/
+images/
+logs/
+.git/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env

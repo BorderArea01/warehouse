@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Warehouse Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e1e1e; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+        
+        .log-line { font-family: 'Menlo', 'Monaco', 'Courier New', monospace; white-space: pre-wrap; word-break: break-all; }
+        .log-info { color: #60a5fa; }
+        .log-warn { color: #fbbf24; }
+        .log-error { color: #f87171; }
+        .log-debug { color: #9ca3af; }
+        .log-timestamp { color: #34d399; margin-right: 8px; }
+        
+        .json-key { color: #9cdcfe; }
+        .json-string { color: #ce9178; }
+        .json-number { color: #b5cea8; }
+        .json-boolean { color: #569cd6; }
+        .json-null { color: #569cd6; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 h-screen flex flex-col overflow-hidden">
+    <div id="app" class="flex h-full">
+        <!-- Sidebar -->
+        <div class="w-80 bg-gray-800 flex-shrink-0 flex flex-col border-r border-gray-700">
+            <div class="p-4 border-b border-gray-700 font-bold text-xl flex justify-between items-center">
+                <span>Warehouse</span>
+                <div class="flex space-x-2">
+                     <button @click="currentTab = 'logs'" :class="{'text-blue-400': currentTab === 'logs', 'text-gray-500': currentTab !== 'logs'}" class="hover:text-blue-300">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                     </button>
+                     <button @click="currentTab = 'config'" :class="{'text-blue-400': currentTab === 'config', 'text-gray-500': currentTab !== 'config'}" class="hover:text-blue-300">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                     </button>
+                </div>
+            </div>
+
+            <!-- Logs Sidebar -->
+            <div v-if="currentTab === 'logs'" class="flex-1 overflow-y-auto p-2 space-y-2">
+                <div v-if="loadingLogs" class="text-center text-gray-500 py-4">Loading...</div>
+                
+                <div v-for="group in logGroups" :key="group.date" class="border border-gray-700 rounded bg-gray-850">
+                    <button @click="group.expanded = !group.expanded" class="w-full flex justify-between items-center p-2 text-sm font-semibold hover:bg-gray-700 rounded transition-colors">
+                        <span>{{ group.date }}</span>
+                        <span class="text-xs text-gray-500">{{ group.files.length }} files</span>
+                        <span class="transform transition-transform" :class="{'rotate-180': group.expanded}">▼</span>
+                    </button>
+                    
+                    <div v-show="group.expanded" class="pl-2 pr-1 pb-1 space-y-1 mt-1">
+                        <div v-for="file in group.files" :key="file.path" 
+                             @click="selectLog(file)"
+                             :class="{'bg-blue-600 text-white': selectedLog && selectedLog.path === file.path, 'hover:bg-gray-700 text-gray-300': !selectedLog || selectedLog.path !== file.path}"
+                             class="cursor-pointer p-2 rounded text-xs flex justify-between items-center transition-colors">
+                            <div class="flex items-center space-x-2 truncate">
+                                <span class="w-2 h-2 rounded-full flex-shrink-0" 
+                                      :class="{'bg-green-500': file.category === 'Person', 'bg-yellow-500': file.category === 'Asset', 'bg-gray-500': file.category === 'System'}">
+                                </span>
+                                <span class="truncate">{{ file.name }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Config Sidebar (Actions) -->
+            <div v-if="currentTab === 'config'" class="flex-1 overflow-y-auto p-4 space-y-4">
+                 <div class="text-sm text-gray-400 mb-4">
+                    Modify system configuration (.env). Changes require a system restart to take effect fully.
+                </div>
+                <button @click="saveConfig" class="w-full py-2 bg-blue-600 hover:bg-blue-700 rounded text-white font-medium transition-colors">
+                    Save Changes
+                </button>
+                <button @click="exportConfig" class="w-full py-2 bg-gray-700 hover:bg-gray-600 rounded text-white font-medium transition-colors">
+                    Export .env
+                </button>
+                
+                <div class="pt-4 border-t border-gray-700">
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Import Configuration</label>
+                    <input type="file" ref="fileInput" @change="importConfig" class="block w-full text-sm text-gray-400
+                      file:mr-4 file:py-2 file:px-4
+                      file:rounded-full file:border-0
+                      file:text-sm file:font-semibold
+                      file:bg-blue-600 file:text-white
+                      hover:file:bg-blue-700
+                    "/>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="flex-1 flex flex-col h-full bg-gray-900">
+            <!-- Header -->
+            <div class="h-14 bg-gray-800 border-b border-gray-700 flex items-center px-4 justify-between">
+                <div class="font-medium truncate">
+                    <span v-if="currentTab === 'logs'">
+                        <span v-if="selectedLog" class="text-blue-400">{{ selectedLog.name }}</span>
+                        <span v-else class="text-gray-500">Select a log file to view</span>
+                    </span>
+                    <span v-else>Configuration (.env)</span>
+                </div>
+                <div v-if="currentTab === 'logs' && selectedLog" class="flex items-center space-x-3">
+                     <button @click="isReversed = !isReversed" 
+                             class="text-sm px-3 py-1 rounded transition-colors flex items-center space-x-1"
+                             :class="isReversed ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700 hover:bg-gray-600'">
+                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+                         </svg>
+                         <span>{{ isReversed ? 'Newest First' : 'Oldest First' }}</span>
+                     </button>
+                     <button @click="refreshLog" class="text-sm bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded transition-colors" title="Refresh Log">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                     </button>
+                     <button @click="deleteLog" class="text-sm bg-red-900 hover:bg-red-800 text-red-100 px-3 py-1 rounded transition-colors" title="Delete Log">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                     </button>
+                </div>
+            </div>
+
+            <!-- Log Viewer -->
+            <div v-if="currentTab === 'logs'" class="flex-1 overflow-auto p-4 font-mono text-sm bg-[#1e1e1e]" ref="logContainer">
+                <div v-if="loadingContent" class="text-gray-500">Loading content...</div>
+                <div v-else-if="!selectedLog" class="flex flex-col items-center justify-center h-full text-gray-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    <p>Select a log file from the sidebar</p>
+                </div>
+                <div v-else>
+                     <!-- JSONL Viewer -->
+                     <div v-if="isJsonLog">
+                        <div v-for="(line, idx) in parsedContent" :key="idx" class="mb-2 p-2 bg-gray-800 rounded border border-gray-700">
+                            <div class="text-xs text-gray-500 mb-1 border-b border-gray-700 pb-1 flex justify-between">
+                                <span>Line {{ idx + 1 }}</span>
+                                <span v-if="line.timestamp" class="text-green-400">{{ line.timestamp }}</span>
+                            </div>
+                            <pre v-html="syntaxHighlight(line)"></pre>
+                        </div>
+                     </div>
+                     <!-- Standard Log Viewer -->
+                     <div v-else class="space-y-1">
+                        <div v-for="(line, idx) in parsedContent" :key="idx" class="log-line" v-html="formatLogLine(line)"></div>
+                     </div>
+                </div>
+            </div>
+
+            <!-- Config Editor -->
+            <div v-if="currentTab === 'config'" class="flex-1 overflow-hidden flex flex-col">
+                <textarea v-model="configContent" class="flex-1 bg-[#1e1e1e] text-gray-300 p-4 font-mono text-sm resize-none focus:outline-none" spellcheck="false"></textarea>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const currentTab = ref('logs');
+                const logGroups = ref([]);
+                const selectedLog = ref(null);
+                const logContent = ref('');
+                const configContent = ref('');
+                const loadingLogs = ref(false);
+                const loadingContent = ref(false);
+                const logContainer = ref(null);
+                const isReversed = ref(false);
+
+                // Fetch logs list
+                const fetchLogs = async () => {
+                    loadingLogs.value = true;
+                    try {
+                        const res = await fetch('/api/logs');
+                        const data = await res.json();
+                        // Initialize expanded state
+                        logGroups.value = data.map((group, index) => ({
+                            ...group,
+                            expanded: index === 0 // Expand first group by default
+                        }));
+                    } catch (e) {
+                        console.error(e);
+                    } finally {
+                        loadingLogs.value = false;
+                    }
+                };
+
+                const fetchConfig = async () => {
+                    try {
+                        const res = await fetch('/api/config');
+                        const data = await res.json();
+                        configContent.value = data.content;
+                    } catch (e) {
+                        console.error(e);
+                    }
+                };
+
+                const selectLog = async (file) => {
+                    selectedLog.value = file;
+                    isReversed.value = false; // Reset to default (Oldest First)
+                    await loadLogContent(file.path);
+                };
+
+                const refreshLog = async () => {
+                    if (selectedLog.value) {
+                        await loadLogContent(selectedLog.value.path);
+                    }
+                };
+
+                const loadLogContent = async (path) => {
+                    loadingContent.value = true;
+                    logContent.value = '';
+                    try {
+                        const res = await fetch(`/api/logs/${path}`);
+                        const data = await res.json();
+                        logContent.value = data.content;
+                        
+                        // Scroll to bottom
+                        nextTick(() => {
+                            if (logContainer.value) {
+                                logContainer.value.scrollTop = logContainer.value.scrollHeight;
+                            }
+                        });
+                    } catch (e) {
+                        logContent.value = `Error loading log: ${e.message}`;
+                    } finally {
+                        loadingContent.value = false;
+                    }
+                };
+
+                // Parsed content for rendering
+                const isJsonLog = computed(() => {
+                    if (!selectedLog.value) return false;
+                    return selectedLog.value.name.endsWith('.jsonl') || selectedLog.value.name.endsWith('.json');
+                });
+
+                const parsedContent = computed(() => {
+                    if (!logContent.value) return [];
+                    const lines = logContent.value.split('\n').filter(l => l.trim());
+                    
+                    let result = lines;
+                    if (isJsonLog.value) {
+                        result = lines.map(line => {
+                            try {
+                                return JSON.parse(line);
+                            } catch (e) {
+                                return { raw: line, error: "Invalid JSON" };
+                            }
+                        });
+                    }
+                    
+                    if (isReversed.value) {
+                        return result.reverse();
+                    }
+                    return result;
+                });
+
+                // Formatters
+                const formatLogLine = (line) => {
+                    // Highlight Timestamp (YYYY-MM-DD HH:MM:SS)
+                    let formatted = line.replace(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d{3})?)/, '<span class="log-timestamp">$1</span>');
+                    
+                    // Highlight Levels
+                    formatted = formatted.replace(/(INFO)/g, '<span class="log-info">INFO</span>');
+                    formatted = formatted.replace(/(WARN|WARNING)/g, '<span class="log-warn">$1</span>');
+                    formatted = formatted.replace(/(ERROR|CRITICAL|FATAL)/g, '<span class="log-error">$1</span>');
+                    formatted = formatted.replace(/(DEBUG)/g, '<span class="log-debug">DEBUG</span>');
+                    
+                    return formatted;
+                };
+
+                const syntaxHighlight = (json) => {
+                    if (typeof json !== 'string') {
+                        json = JSON.stringify(json, undefined, 2);
+                    }
+                    json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                        var cls = 'json-number';
+                        if (/^"/.test(match)) {
+                            if (/:$/.test(match)) {
+                                cls = 'json-key';
+                            } else {
+                                cls = 'json-string';
+                            }
+                        } else if (/true|false/.test(match)) {
+                            cls = 'json-boolean';
+                        } else if (/null/.test(match)) {
+                            cls = 'json-null';
+                        }
+                        return '<span class="' + cls + '">' + match + '</span>';
+                    });
+                }
+
+                // Config Actions
+                const saveConfig = async () => {
+                    try {
+                        const res = await fetch('/api/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ content: configContent.value })
+                        });
+                        if (res.ok) alert('Configuration saved!');
+                        else alert('Failed to save');
+                    } catch (e) {
+                        alert(e.message);
+                    }
+                };
+
+                const exportConfig = () => {
+                    window.location.href = '/api/config/export';
+                };
+
+                const importConfig = async (event) => {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    
+                    if (!confirm("Overwrite current configuration?")) return;
+
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    try {
+                        const res = await fetch('/api/config/import', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        if (res.ok) {
+                            alert('Imported successfully!');
+                            fetchConfig();
+                        } else {
+                            alert('Import failed');
+                        }
+                    } catch (e) {
+                        alert(e.message);
+                    }
+                };
+
+                const deleteLog = async () => {
+                    if (!selectedLog.value) return;
+                    if (!confirm(`Are you sure you want to delete ${selectedLog.value.name}? This cannot be undone.`)) return;
+                    
+                    try {
+                        const res = await fetch(`/api/logs/${selectedLog.value.path}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        
+                        if (res.ok) {
+                            alert('Log deleted successfully');
+                            selectedLog.value = null;
+                            logContent.value = '';
+                            fetchLogs();
+                        } else {
+                            alert('Failed to delete: ' + data.detail);
+                        }
+                    } catch (e) {
+                        alert('Error: ' + e.message);
+                    }
+                };
+
+                onMounted(() => {
+                    fetchLogs();
+                    fetchConfig();
+                });
+
+                return {
+                    currentTab, logGroups, selectedLog, logContent, configContent,
+                    loadingLogs, loadingContent, logContainer, isReversed,
+                    isJsonLog, parsedContent,
+                    selectLog, refreshLog, deleteLog, saveConfig, exportConfig, importConfig,
+                    formatLogLine, syntaxHighlight
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
