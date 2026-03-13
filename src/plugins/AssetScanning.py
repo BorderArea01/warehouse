@@ -328,6 +328,11 @@ class AssetScanning:
         """
         Analyze asset changes between start and end times (plus 15 seconds buffer) and return the list.
         This is a synchronous blocking call.
+        
+        GATE READER LOGIC:
+        An asset change is defined as a COMPLETE session: Online -> Offline.
+        This implies the tag passed through the gate (was seen, then disappeared).
+        Tags that are only "Online" (still being read) or only "Offline" (ghost departure) are ignored.
         """
         logger.info(f"Waiting 15 seconds for asset state to stabilize...")
         time.sleep(15)
@@ -388,7 +393,11 @@ class AssetScanning:
                         elif event == 'offline':
                             start_str = pending_sessions.get(epc)
                             if not start_str:
-                                start_str = event_time_str 
+                                # Start time missing (maybe from previous day or log rotation), use current offline time as approx start?
+                                # No, strictly require Online -> Offline for gate logic to be safe.
+                                # But if we missed the Online event, we might miss a valid pass.
+                                # For strict logic "Once Online + Once Offline", we skip this orphan Offline.
+                                continue 
                             
                             try:
                                 end_dt_val = datetime.strptime(event_time_str, "%Y-%m-%d %H:%M:%S")
@@ -437,35 +446,11 @@ class AssetScanning:
                         continue
             
             # 4. Handle remaining pending sessions (Online without Offline)
-            # If an asset appeared during the visit window and is still "Online", it counts as an arrival.
-            for epc, start_str in pending_sessions.items():
-                try:
-                    # Parse start time
-                    if 'T' in start_str:
-                         start_dt_val = datetime.fromisoformat(start_str)
-                    else:
-                         start_dt_val = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
-                    
-                    # Make timezone aware if needed
-                    if start_dt_val.tzinfo is None and start_dt.tzinfo is not None:
-                        start_dt_val = start_dt_val.replace(tzinfo=start_dt.tzinfo)
-                    
-                    # If it appeared AFTER the visit started (or during the window), count it.
-                    # Note: If it appeared BEFORE the visit started, it was already there, so no change relative to "being there".
-                    if start_dt_val >= start_dt and start_dt_val <= analysis_end_dt:
-                        if epc not in epc_occurrences:
-                             epc_occurrences[epc] = []
-                         
-                        epc_occurrences[epc].append({
-                             'epc': epc,
-                             'start_ts': start_str,
-                             'end_ts': None, # Still online
-                             'duration_ms': -1
-                         })
-                        logger.debug(f"EPC {epc} is still online (started {start_str}), counting as session.")
-                except Exception as e:
-                    logger.warning(f"Error processing pending session for {epc}: {e}")
-                    continue
+            # GATE LOGIC CHANGE: IGNORE these.
+            # If a tag is still Online, it hasn't "passed" (Offline) yet.
+            # "一次上线加一次下线才算为一个资产变动" -> Strict requirement.
+            if pending_sessions:
+                logger.debug(f"Ignoring {len(pending_sessions)} pending sessions (Online only) due to strict Gate Logic.")
 
             # Deduplication logic: Use time-based merging (Debounce)
             # This handles signal jitter (split sessions) and detects ANY valid movement.
