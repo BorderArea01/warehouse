@@ -44,6 +44,7 @@ class Config:
 
     # Face Recognition Configuration
     FACE_API_URL = os.getenv('FACE_API_URL')
+    FACE_API_KEY = os.getenv('FACE_API_KEY')
     FACE_CONFIDENCE_THRESHOLD = float(os.getenv('FACE_CONFIDENCE_THRESHOLD')) if os.getenv('FACE_CONFIDENCE_THRESHOLD') else 0.55
     FACE_MIN_DETECTION_DURATION = float(os.getenv('FACE_MIN_DETECTION_DURATION')) if os.getenv('FACE_MIN_DETECTION_DURATION') else 0.6
     
