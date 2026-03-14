@@ -13,9 +13,13 @@
 
 ### 1. 实时人脸检测与抓拍 (FaceCapture)
 *   **实时监控**: 调用本地摄像头（Index 0）进行不间断监控。
-*   **智能识别**: 集成 Google MediaPipe (EfficientDet-Lite0) 模型检测人员，支持防误触（Debounce 0.6s）与距离过滤。
-*   **身份验证**: 对接后端人脸识别接口，确认人员身份。
-*   **流量控制**: 智能冷却机制，游客冷却 1s，普通人员冷却 5s；支持状态校验，避免重复记录未离场人员。
+*   **智能识别**: 集成 Google MediaPipe (EfficientDet-Lite0) 模型检测人员。
+*   **身份验证**: 对接 Exadel CompreFace 人脸识别接口，确认人员身份。
+    *   **Subject 格式**: 支持 `类型_姓名_ID` (如 `User_ZhangSan_1001`) 或 `姓名_ID` 格式。
+    *   **自动解析**: 系统自动从 Subject 中提取 `UserID` 和 `NickName`，并根据关键字（如 "Visitor"）判断用户类型。
+*   **流量控制**: 
+    *   **注册用户**: 10分钟冷却 (600s)，避免重复上报。
+    *   **游客**: 10秒缓冲期。若缓冲期内检测到注册用户，则优先上报用户并丢弃游客记录；否则上报游客。
 *   **实时上报**: 人员进入时立即通知服务器，并附带抓拍图片链接。
 
 ### 2. 资产流动追踪 (AssetScanning)
@@ -73,12 +77,13 @@ graph TD
     RFIDAnt -- "同轴电缆 Coaxial" --> RFIDReader
     RFIDReader -- "USB / 串口 ttyACM0" --> Host
     HikCam -- "RTSP 视频流 TCP" --> Host
-    Host == "HTTP POST JSON<br/>Workflow Execution" ==> Workflow
-    Host == "HTTP POST File<br/>抓拍图片上传" ==> MinIO
+    Host == "HTTP POST<br/>Workflow Execution" ==> Workflow
+    Host == "HTTP POST File<br/>Image Upload" ==> MinIO
+    Host == "HTTP POST<br/>Face Recognition" ==> CompreFace[CompreFace Server]:::server
     
     linkStyle 0,1,2 stroke:#616161,stroke-width:2px;
     linkStyle 3 stroke:#1565C0,stroke-width:2px,stroke-dasharray: 5 5;
-    linkStyle 4,5 stroke:#2E7D32,stroke-width:3px;
+    linkStyle 4,5,6 stroke:#2E7D32,stroke-width:3px;
 ```
 
 ### 2. 核心流程时序图
@@ -118,14 +123,18 @@ sequenceDiagram
     rect rgb(227, 242, 253)
         Note left of Face: 阶段一：人员进入
         Cam->>Face: 捕获实时画面
-        Face->>Face: MediaPipe 检测人员 + 身份识别
+        Face->>Face: MediaPipe 检测人员
+        Face->>CompreFace: [POST] 识别人脸 (Image)
+        CompreFace-->>Face: 返回 Subject (e.g. "User_Name_ID")
+        
+        Face->>Face: 解析 UserID, 过滤游客 (10s buffer)
         
         Face->>Up: upload_file(抓拍图片)
         Up->>MinIO: Upload File
         MinIO-->>Up: 返回 URL
         Up-->>Face: 返回图片链接
 
-        Face->>Local: 写入进入记录 (Start Time, UserID)
+        Face->>Local: 写入进入记录
         Face->>WF: [POST] 人员进入通知 (ID, ImageURL)
     end
 

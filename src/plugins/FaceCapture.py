@@ -53,6 +53,7 @@ class FaceCapture:
 
     def __init__(self, model_path: str):
         self.face_api_url = Config.FACE_API_URL
+        self.face_api_key = Config.FACE_API_KEY
         self.bj_tz = timezone(timedelta(hours=8))
         self.to_agent = ToAgent(module_name="FaceCapture") if ToAgent else None
         self.uploader = MinioUploader() if MinioUploader else None
@@ -341,12 +342,42 @@ class FaceCapture:
             nick_name = "Unknown"
             user_type = "Unknown"
             
-            if isinstance(result, dict) and result.get("code") == 200:
-                data = result.get("data", {})
-                if data:
-                    user_id = str(data.get("userId", "unknown"))
-                    nick_name = data.get("nickName", "Unknown")
-                    user_type = data.get("userType", "Unknown")
+            # Parse CompreFace standard response format
+            # Example: {"result": [{"box": {...}, "subjects": [{"subject": "Name_ID", "similarity": 0.99}]}]}
+            if isinstance(result, dict) and "result" in result and len(result["result"]) > 0:
+                first_face = result["result"][0]
+                subjects = first_face.get("subjects", [])
+                
+                if subjects and len(subjects) > 0:
+                    best_match = subjects[0]
+                    subject_name = best_match.get("subject", "")
+                    similarity = best_match.get("similarity", 0.0)
+                    
+                    if similarity > 0.85: # Set confidence threshold
+                        # Parse Subject format: "Type_Name_ID" or "Name_ID"
+                        # Rule: Extract the last part as UserID
+                        parts = subject_name.split("_")
+                        if len(parts) >= 2:
+                            user_id = parts[-1] 
+                            # If 3 or more parts, take the middle part as name
+                            if len(parts) >= 3:
+                                nick_name = parts[1]
+                            else:
+                                nick_name = parts[0]
+                        else:
+                            # Fallback: Single part
+                            nick_name = subject_name
+                            user_id = subject_name
+                        
+                        # Identify Visitor
+                        if "游客" in subject_name or "visitor" in subject_name.lower():
+                            user_type = "Visitor"
+                        else:
+                            user_type = "User"
+                    else:
+                        logger.debug(f"Face recognized but similarity too low: {similarity}")
+            else:
+                logger.debug(f"CompreFace returned no valid subjects: {result}")
             
             # Check for invalid ID
             if self._should_ignore_user(user_id, nick_name, user_type):
@@ -448,7 +479,19 @@ class FaceCapture:
                 return None
             
             files = {'file': (filename, encoded_img.tobytes(), 'image/jpeg')}
-            response = requests.post(self.face_api_url, files=files, timeout=10) # Reduced timeout for responsiveness
+            headers = {"x-api-key": self.face_api_key}
+            params = {
+                "limit": 1,
+                "det_prob_threshold": 0.8
+            }
+            
+            response = requests.post(
+                self.face_api_url, 
+                headers=headers,
+                files=files, 
+                params=params,
+                timeout=10
+            )
             
             try:
                 return response.json()
@@ -468,11 +511,8 @@ class FaceCapture:
             img_url = record.get('image_url', '无')
             
             user_id = "Unknown"
-            nick_name = "Unknown"
-            if isinstance(face_res, dict) and face_res.get("code") == 200:
-                data = face_res.get("data", {})
-                user_id = data.get("userId", "Unknown")
-                nick_name = data.get("nickName", "Unknown")
+            nick_name = record.get('person_name', 'Unknown')
+            user_id = record.get('user_id', 'Unknown')
 
             api_url = Config.AGENT_WORKFLOW_URL
             headers = {
