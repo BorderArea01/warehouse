@@ -268,8 +268,28 @@
 
                 // Formatters
                 const formatLogLine = (line) => {
+                    let formatted = line;
+                    
+                    // HTML Escape first
+                    formatted = formatted.replace(/&/g, "&amp;")
+                                         .replace(/</g, "&lt;")
+                                         .replace(/>/g, "&gt;")
+                                         .replace(/"/g, "&quot;")
+                                         .replace(/'/g, "&#039;");
+
+                    // ANSI Color Codes
+                    formatted = formatted.replace(/\\033\[92m/g, '<span style="color: #4caf50; font-weight: bold;">') // Bright Green
+                                         .replace(/\\033\[95m/g, '<span style="color: #e91e63; font-weight: bold;">') // Bright Magenta
+                                         .replace(/\\033\[96m/g, '<span style="color: #00bcd4; font-weight: bold;">') // Bright Cyan
+                                         .replace(/\\033\[94m/g, '<span style="color: #2196f3; font-weight: bold;">') // Bright Blue
+                                         .replace(/\\033\[0m/g, '</span>'); // Reset
+
+                    // Also handle actual escape characters if they appear directly
+                    // (Though usually they come as \033 or \x1b in strings)
+                    // The backend might send them as literal "\033" strings if using json.dump
+                    
                     // Highlight Timestamp (YYYY-MM-DD HH:MM:SS)
-                    let formatted = line.replace(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d{3})?)/, '<span class="log-timestamp">$1</span>');
+                    formatted = formatted.replace(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d{3})?)/, '<span class="log-timestamp">$1</span>');
                     
                     // Highlight Levels
                     formatted = formatted.replace(/(INFO)/g, '<span class="log-info">INFO</span>');

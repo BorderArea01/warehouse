@@ -310,6 +310,9 @@ class FaceCapture:
                     return
                 # Update cooldown
                 self.visitor_cooldown_until = current_time + Config.FACE_COOLDOWN_DURATION
+            
+            # Now upload image for the visitor (delayed upload)
+            self._upload_image_for_record(to_report)
                 
             logger.info(f"Reporting Buffered Visitor: {to_report.get('person_name')}")
             self.save_logs(to_report)
@@ -328,6 +331,34 @@ class FaceCapture:
         crop_y2 = min(h, y2 + pad_y)
         
         return frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
+        
+    def _upload_image_for_record(self, record):
+        """Helper to upload image for a record if needed."""
+        if not self.uploader:
+            return
+
+        # Check if we have image data in record (we store it temporarily in 'img_data' key if optimizing)
+        # But wait, we can't store numpy array in record if we want it serializable? 
+        # Actually record is Dict[str, Any], so it's fine in memory.
+        img_data = record.pop('img_data', None)
+        
+        if img_data is not None and record.get('image_url') == "无":
+            try:
+                current_time = time.time()
+                temp_filename = f"temp_face_{int(current_time*1000)}.jpg"
+                log_dir = Path(Config.PROJECT_ROOT) / "logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                temp_path = log_dir / temp_filename
+                cv2.imwrite(str(temp_path), img_data)
+                
+                upload_res = self.uploader.upload_file(temp_path)
+                if upload_res:
+                    record['image_url'] = upload_res.get('fileUrl', upload_res.get('url', str(upload_res)))
+                
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception as e:
+                logger.error(f"Image Upload Failed (Delayed): {e}")
 
     def recognize_task(self, img_to_send, current_time, conf):
         """Async recognition task."""
@@ -388,26 +419,9 @@ class FaceCapture:
             
             cooldown_duration = Config.FACE_COOLDOWN_DURATION
             
-            # Prepare Record (without sending yet)
-            # Upload Image First? Ideally yes, so we have the URL ready
-            image_url = "无"
-            if self.uploader:
-                try:
-                    temp_filename = f"temp_face_{int(current_time*1000)}.jpg"
-                    log_dir = Path(Config.PROJECT_ROOT) / "logs"
-                    log_dir.mkdir(parents=True, exist_ok=True)
-                    temp_path = log_dir / temp_filename
-                    cv2.imwrite(str(temp_path), img_to_send)
-                    
-                    upload_res = self.uploader.upload_file(temp_path)
-                    if upload_res:
-                        image_url = upload_res.get('fileUrl', upload_res.get('url', str(upload_res)))
-                    
-                    if temp_path.exists():
-                        temp_path.unlink()
-                except Exception as e:
-                    logger.error(f"Image Upload Failed: {e}")
-
+            # OPTIMIZATION: Do NOT upload immediately.
+            # Store image in record for later upload if needed.
+            
             record = {
                 "start_time": bj_time.strftime("%Y-%m-%d %H:%M:%S"),
                 "face_result": result,
@@ -415,7 +429,8 @@ class FaceCapture:
                 "event_type": "realtime_identification",
                 "confidence": float(conf),
                 "user_id": user_id,
-                "image_url": image_url
+                "image_url": "无",
+                "img_data": img_to_send # Keep reference for delayed upload
             }
 
             if is_visitor:
@@ -447,6 +462,9 @@ class FaceCapture:
                     if self.pending_visitor_report:
                         logger.info("Discarding buffered visitor report due to User detection.")
                         self.pending_visitor_report = None
+                
+                # Now upload image for the user (delayed upload)
+                self._upload_image_for_record(record)
 
                 logger.info(f"Reporting User: {nick_name} ({user_id})")
                 self.save_logs(record)
@@ -485,6 +503,21 @@ class FaceCapture:
                 "det_prob_threshold": 0.8
             }
             
+            # ANSI Colors
+            # SEND: Green, RECEIVE: Magenta/Pink
+            COLOR_SEND = "\033[92m" # Bright Green
+            COLOR_RECV = "\033[95m" # Bright Magenta
+            COLOR_RESET = "\033[0m"
+            
+            log_req = (
+                f"\n{COLOR_SEND}{'='*30}\n"
+                f"[发送] Module: FaceCapture (CompreFace)\n"
+                f"URL: {self.face_api_url}\n"
+                f"File: {filename}\n"
+                f"{'='*30}{COLOR_RESET}"
+            )
+            logger.info(log_req)
+
             response = requests.post(
                 self.face_api_url, 
                 headers=headers,
@@ -494,8 +527,19 @@ class FaceCapture:
             )
             
             try:
-                return response.json()
+                resp_json = response.json()
+                # Log Response
+                log_resp = (
+                    f"\n{COLOR_RECV}{'='*30}\n"
+                    f"[返回] Module: FaceCapture (CompreFace)\n"
+                    f"Status: {response.status_code}\n"
+                    f"Result: {json.dumps(resp_json.get('result', []), ensure_ascii=False)[:200]}...\n"
+                    f"{'='*30}{COLOR_RESET}"
+                )
+                logger.info(log_resp)
+                return resp_json
             except json.JSONDecodeError:
+                logger.info(f"\n{COLOR_RECV}[返回] Module: FaceCapture (CompreFace)\nStatus: {response.status_code}\nRaw: {response.text[:200]}...{COLOR_RESET}")
                 return {"raw": response.text}
         except Exception as e:
             logger.error(f"API Request Error: {e}")
@@ -535,12 +579,13 @@ class FaceCapture:
             }
 
             # ANSI Colors
-            COLOR_REQ = "\033[96m"
-            COLOR_RES = "\033[94m"
+            # SEND: Green, RECEIVE: Magenta
+            COLOR_SEND = "\033[92m"
+            COLOR_RECV = "\033[95m"
             COLOR_RESET = "\033[0m"
 
             log_req = (
-                f"\n{COLOR_REQ}{'='*30}\n"
+                f"\n{COLOR_SEND}{'='*30}\n"
                 f"[发送] Module: FaceCapture\n"
                 f"Sending: {json.dumps(payload, ensure_ascii=False, indent=2)}\n"
                 f"{'='*30}{COLOR_RESET}"
@@ -552,7 +597,7 @@ class FaceCapture:
             try:
                 resp_data = resp.json()
                 log_resp = (
-                    f"\n{COLOR_RES}{'='*30}\n"
+                    f"\n{COLOR_RECV}{'='*30}\n"
                     f"[返回] Module: FaceCapture\n"
                     f"Status: {resp.status_code}\n"
                     f"Message: {resp_data.get("data", {}).get("message", "No message")}\n"
@@ -561,7 +606,7 @@ class FaceCapture:
                 logger.info(log_resp)
             except ValueError:
                 log_resp = (
-                    f"\n{COLOR_RES}{'='*30}\n"
+                    f"\n{COLOR_RECV}{'='*30}\n"
                     f"[返回] Module: FaceCapture\n"
                     f"Status: {resp.status_code}\n"
                     f"Response: {resp.text[:200]}...\n"
@@ -580,6 +625,7 @@ class FaceCapture:
             file_path = os.path.join(log_dir, f"{today_str}_visit_records.jsonl")
             
             record.pop('person_name', None)
+            record.pop('img_data', None) # Ensure img_data is removed before saving
             with open(file_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:

@@ -3,90 +3,94 @@
 ## 简介 (Introduction)
 本项目是一个集成了计算机视觉和物联网技术的仓库智能监控系统。它利用 AI 模型进行人员进出管理，结合 RFID 技术进行资产流动追踪，实现对仓库环境的全方位自动化监控。
 
-系统核心包含四大模块：
-1.  **FaceCapture**: 基于 MediaPipe 的实时人脸检测与身份识别（入口）。
-2.  **AssetScanning**: 基于 RFID 的资产实时盘点与变动追踪。
-3.  **TimeCapture**: 基于 MediaPipe 与 RTSP 视频流的人员离场判定与事件闭环（出口）。
-4.  **MinioUploader**: 基于 MinIO 的抓拍图片自动上传服务。
+系统采用 Docker 容器化部署，包含两个核心服务容器：
+1.  **warehouse-system**: 核心业务容器，包含 FaceCapture, AssetScanning, TimeCapture, MinioUploader 以及 Web 管理后台。
+2.  **feishu-longconnect**: 独立容器，负责飞书卡片消息的长连接交互。
 
 ## 核心功能 (Features)
 
 ### 1. 实时人脸检测与抓拍 (FaceCapture)
-*   **实时监控**: 调用本地摄像头（Index 0）进行不间断监控。
-*   **智能识别**: 集成 Google MediaPipe (EfficientDet-Lite0) 模型检测人员。
-*   **身份验证**: 对接 Exadel CompreFace 人脸识别接口，确认人员身份。
-    *   **Subject 格式**: 支持 `类型_姓名_ID` (如 `User_ZhangSan_1001`) 或 `姓名_ID` 格式。
-    *   **自动解析**: 系统自动从 Subject 中提取 `UserID` 和 `NickName`，并根据关键字（如 "Visitor"）判断用户类型。
-*   **流量控制**: 
-    *   **注册用户**: 10分钟冷却 (600s)，避免重复上报。
-    *   **游客**: 10秒缓冲期。若缓冲期内检测到注册用户，则优先上报用户并丢弃游客记录；否则上报游客。
-*   **实时上报**: 人员进入时立即通知服务器，并附带抓拍图片链接。
+*   **实时监控**: 调用本地摄像头（Index 0, V4L2 MJPG）进行不间断监控。
+*   **智能识别**: 
+    *   集成 Google MediaPipe (EfficientDet-Lite0) 模型检测人员。
+    *   **直通模式**: 只要检测到人脸即刻触发识别，移除复杂的本地追踪逻辑以提高响应速度。
+*   **身份验证**: 
+    *   直接对接 **Exadel CompreFace** REST API。
+    *   **Subject 解析**: 支持 `类型_姓名_ID` (如 `User_ZhangSan_1001`) 或 `姓名_ID` 格式，自动提取 `UserID` 和 `NickName`。
+*   **流量控制 (智能防抖)**: 
+    *   **注册用户**: **10分钟冷却 (600s)**。同一用户在10分钟内只会上报一次，避免刷屏。
+    *   **游客**: **10秒缓冲期**。若在缓冲期内检测到注册用户，系统会**优先上报用户**并丢弃游客记录；只有缓冲期结束且无用户出现时，才上报游客。
+*   **按需上传**: 图片仅在通过冷却检查且确定需要上报时才上传至 MinIO，大幅节省带宽和存储。
 
 ### 2. 资产流动追踪 (AssetScanning)
-*   **门框模式**: 将 RFID 天线安装在门框处，标签经过时短暂被读取。
-*   **切换判定**: 检测到“短暂上线→下线”即判定为一次**状态变动 (Toggle)**。
-    *   不再区分入库/出库，统一上报变动事件。
-    *   由服务器端根据历史状态判断具体的出入方向。
-*   **变动分析**: 在人员离场后，自动分析该时段内的资产变动情况。
-*   **数据同步**: 生成资产变动报告并上报服务器。
+*   **门框模式**: 将 RFID 天线安装在门框处。
+*   **严格判定逻辑**: 
+    *   **完整穿过**: 资产必须经历 **Online (出现) -> Offline (消失)** 的完整过程才被视为一次有效变动。
+    *   **去噪**: 过滤掉只有 Online 没有 Offline（长期停留）或只有 Offline（幽灵数据）的无效记录。
+*   **离场触发**: 仅在人员离场（TimeCapture 触发）时，回溯过去一段时间的资产变动并上报。
 
 ### 3. 离场监控与事件闭环 (TimeCapture)
 *   **全景监控**: 通过 RTSP 协议连接海康威视（Hikvision）摄像头。
-*   **离场判定**: 后台线程实时分析视频流，当仓库内无人（超时）时判定为离场。
-*   **自动闭环**: 计算停留时长，触发资产变动分析，并将完整记录（人员+时间+资产）上报系统。
+*   **离场判定**: 后台线程实时分析视频流，当仓库内持续无人（超时 12s）时判定为离场。
+*   **自动闭环**: 触发 AssetScanning 进行资产盘点，并将【离场时间 + 变动资产列表】打包上报。
 
-## 系统架构与流程 (Architecture & Workflow)
+### 4. 系统管理与日志 (Web Admin)
+*   **Web 界面**: 集成在 `warehouse-system` 容器中，端口 `13999`。
+*   **实时日志**: 支持查看 System, Asset, Person 各类日志。
+*   **日志高亮**: 支持 ANSI 颜色解析，**绿色**代表发送请求，**粉色**代表接收响应，一目了然。
+*   **配置管理**: 支持在线修改 `.env` 配置文件并重启生效。
 
-### 1. 系统部署拓扑图
-以下拓扑图展示了系统的物理部署架构、硬件连接方式以及网络通信链路。
+## 系统架构 (Architecture)
 
 ```mermaid
 graph TD
-    classDef host fill:#E3F2FD,stroke:#1565C0,stroke-width:3px,color:#000000,font-size:16px;
-    classDef device fill:#F5F5F5,stroke:#616161,stroke-width:2px,color:#000000,font-size:14px;
-    classDef server fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px,color:#000000,font-size:14px;
-    classDef db fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px,color:#000000,font-size:14px;
-    classDef note fill:#FFF9C4,stroke:#FBC02D,stroke-width:1px,color:#000000,font-size:13px;
-
-    subgraph Warehouse [🏢 仓库现场 Warehouse Site]
+    subgraph Docker_Host [🐳 Docker Host]
         direction TB
-        Host[🖥️ 小型PC <br/>Core Controller]:::host
         
-        subgraph USB_Serial [本地直连 Local I/O]
-            direction LR
-            FaceCam[📷 USB 人脸抓拍相机<br/>Face Camera]:::device
-            RFIDReader[📟 RFID 读写器<br/>RFID Reader]:::device
-            RFIDAnt[📡 RFID 天线<br/>RFID Antenna]:::device
+        subgraph Container_System [📦 warehouse-system]
+            Face[� FaceCapture<br/>(MediaPipe + CompreFace)]
+            Asset[� AssetScanning<br/>(RFID C++ SDK)]
+            Time[� TimeCapture<br/>(RTSP + MediaPipe)]
+            Web[🖥️ Web Admin<br/>(FastAPI :13999)]
+            MinioUp[☁️ MinioUploader<br/>(Rate Limit: 1s)]
+            
+            Face --> MinioUp
+            Face --> Web
+            Asset --> Web
+            Time --> Asset
         end
-        
-        subgraph LAN_Dev [局域网设备 LAN Devices]
-            HikCam[📹 海康威视全景相机<br/>Hikvision Camera]:::device
+
+        subgraph Container_Feishu [📦 feishu-longconnect]
+            Feishu[🦅 Feishu Bot<br/>(WebSocket)]
         end
-        
-        NoteHost[运行模块 Modules:<br/>1. FaceCapture 人脸<br/>2. AssetScanning 资产<br/>3. TimeCapture 离场<br/>4. MinioUploader 上传]:::note
-        Host -.- NoteHost
     end
 
-    subgraph Cloud [☁️ 服务器端 Backend Server]
-        direction TB
-        Workflow["⚙️ Workflow Engine<br/>(AWIN平台工作流)"]:::server
-        MinIO[🗄️ MinIO 对象存储<br/>Image Storage]:::server
+    subgraph External_Devices [🔌 External Devices]
+        Cam[📷 USB Camera]
+        RTSP[📹 Hikvision RTSP]
+        RFID_HW[📟 RFID Reader<br/>(/dev/ttyACM*)]
     end
 
-    FaceCam -- "USB / CSI" --> Host
-    RFIDAnt -- "同轴电缆 Coaxial" --> RFIDReader
-    RFIDReader -- "USB / 串口 ttyACM0" --> Host
-    HikCam -- "RTSP 视频流 TCP" --> Host
-    Host == "HTTP POST<br/>Workflow Execution" ==> Workflow
-    Host == "HTTP POST File<br/>Image Upload" ==> MinIO
-    Host == "HTTP POST<br/>Face Recognition" ==> CompreFace[CompreFace Server]:::server
+    subgraph Cloud_Services [☁️ Cloud Services]
+        CompreFace[🧠 CompreFace Server]
+        MinIO[🗄️ MinIO Storage]
+        Workflow[⚙️ Backend Workflow]
+        FeishuAPI[🦅 Feishu Open Platform]
+    end
+
+    Cam ==> Face
+    RTSP ==> Time
+    RFID_HW ==> Asset
     
-    linkStyle 0,1,2 stroke:#616161,stroke-width:2px;
-    linkStyle 3 stroke:#1565C0,stroke-width:2px,stroke-dasharray: 5 5;
-    linkStyle 4,5,6 stroke:#2E7D32,stroke-width:3px;
+    Face -- "Recognize" --> CompreFace
+    MinioUp -- "Upload" --> MinIO
+    Face -- "Report" --> Workflow
+    Time -- "Report" --> Workflow
+    Feishu <-- "WS" --> FeishuAPI
+    Feishu -- "Execute" --> Workflow
 ```
 
-### 2. 核心流程时序图
+### 核心流程时序图 (Sequence Diagram)
 以下时序图展示了 **FaceCapture** (入口)、**AssetScanning** (资产) 和 **TimeCapture** (出口) 三大模块的协同工作流程。
 
 ```mermaid
@@ -155,13 +159,13 @@ sequenceDiagram
     rect rgb(232, 245, 233)
         Note left of Time: 阶段三：人员离开与闭环
         Cam->>Time: RTSP 视频流分析
-        Time->>Time: 检测仓库无人 (超时 5s)
+        Time->>Time: 检测仓库无人 (超时 12s)
         
         Time->>Local: 查找并关闭记录 (Update End Time)
         
         Note right of Time: 触发资产分析
         Time->>Asset: get_asset_changes(Start, End)
-        Asset->>Asset: sleep(8s) 等待状态稳定
+        Asset->>Asset: sleep(15s) 等待状态稳定
         Asset->>Local: 读取日志 & 重构会话
         Asset-->>Time: 返回变动资产列表 (EPC List)
 
@@ -170,137 +174,84 @@ sequenceDiagram
     end
 ```
 
-## 环境要求 (Requirements)
-*   Python 3.8+
-*   Python 依赖以 `requirements.txt` 为准；运行视觉模块还需 `mediapipe`、`opencv-python`、`numpy`。
-*   硬件：
-    *   树莓派 Pi 5 或更高性能工控机（Ubuntu24.04）。
-    *   USB/CSI 摄像头（用于人脸抓拍）。
-    *   海康威视网络摄像头（用于全景监控）。
-    *   串口 RFID 读写器（支持 moduleAPI）。
-
-## 辅助工具 (Helper Scripts)
-*   `origin_scripts/feishu_longconnect.py`: 飞书长链接示例。
-*   `origin_scripts/feishu_img2path.py`: 飞书图片上传与路径转换示例。
-*   `origin_scripts/send_test_card.py`: 飞书卡片消息测试脚本。
-*   `origin_scripts/vedio_backup.py`: 录像备份脚本参考。
-
-## 飞书长连接服务 (Feishu Long Connection)
-
-本系统包含一个独立的飞书长连接服务模块，用于处理飞书卡片消息的交互事件。该模块独立于核心监控业务运行，主要负责打通“飞书前端交互”与“后端工作流”。
-
-### 1. 核心优势
-*   **无需公网 IP**: 采用飞书开放平台的 WebSocket 长连接模式，部署在内网即可接收飞书事件回调，无需穿透内网或配置公网域名。
-*   **实时交互**: 支持飞书卡片按钮（如“确认”、“反馈”）的实时响应与回传。
-
-### 2. 工作原理
-该服务运行 `origin_scripts/feishu_longconnect.py` 脚本，启动后会：
-1.  与飞书服务器建立 **WebSocket** 长连接。
-2.  监听 **卡片交互事件 (card.action.trigger)**。
-3.  根据卡片类型（`card_type`）分发到不同的处理函数。
-4.  调用后端 **Workflow API** (`/open/workflow/execute`) 执行具体的业务逻辑（如更新资产状态）。
-
-### 3. 支持的交互类型
-脚本根据 `card_type` 字段识别以下业务场景：
-*   **asset_review**: 资产复核
-*   **asset_confirm**: 资产确认
-*   **asset_feedback**: 异常反馈
-*   **asset_visitor**: 访客资产登记
-![飞书卡片示例](images/feishu_card.png)
-
-### 4. 配置与运行
-**依赖库**: 需安装 `lark-oapi` (已包含在 `requirements.txt` 中)。
-
-**配置**:
-在脚本 `origin_scripts/feishu_longconnect.py` 中配置飞书应用的凭证：
-```python
-APP_ID = 'cli_...'
-APP_SECRET = '...'
-```
-
-**启动命令**:
-```bash
-python3 origin_scripts/feishu_longconnect.py
-```
-> 注意：该脚本通常作为后台服务常驻运行。
-
 ## 快速开始 (Quick Start)
 
-### 1. 安装依赖
+### 1. 环境准备
+*   操作系统: Linux (推荐 Ubuntu 22.04+)
+*   Docker & Docker Compose
+*   硬件设备连接确认:
+    *   USB 摄像头 -> `/dev/video0`
+    *   RFID 读写器 -> `/dev/ttyACM*`
+
+### 2. 配置 (.env)
+复制 `.env.example` (如果有) 或直接创建 `.env` 文件：
+
+```properties
+# === 基础配置 ===
+RTSP_URL_TIMECAPTURE=rtsp://user:pass@ip:port/...
+AGENT_BASE_URL=http://...
+AGENT_WORKFLOW_ID=...
+AGENT_API_KEY=...
+
+# === 人脸识别 (CompreFace) ===
+FACE_API_URL=http://192.168.x.x:8000/api/v1/recognition/recognize
+FACE_API_KEY=your-uuid-key
+# 冷却时间 (秒)
+FACE_COOLDOWN_DURATION=600.0
+# 游客缓冲 (秒)
+FACE_VISITOR_BUFFER_DURATION=10.0
+
+# === 对象存储 (MinIO) ===
+MINIO_UPLOAD_URL=http://...
+
+# === RFID ===
+RFID_CONN_STR=/dev/ttyACM0
+RFID_LIB_PATH=./lib/libModuleAPI.so
+```
+
+### 3. 启动系统
+使用 Docker Compose 一键启动所有服务：
+
 ```bash
-# 1. 安装系统级依赖
-sudo apt update && sudo apt install -y python3-pip python3-opencv
+# 构建镜像
+sudo docker compose build
 
-# 2. 安装 Python 依赖
-pip install -r requirements.txt --break-system-packages
-python3 -m pip install mediapipe opencv-python numpy --break-system-packages
+# 启动服务 (后台运行)
+sudo docker compose up -d
+
+# 查看日志
+sudo docker compose logs -f
 ```
 
-### 2. 配置环境
-编辑项目根目录 `.env`，至少配置以下关键项：
-
-```
-RTSP_URL_TIMECAPTURE=
-FACE_API_URL=
-AGENT_BASE_URL=
-EMPLOYEE_ID=
-USER_ID=
-MINIO_UPLOAD_URL=
-RFID_CONN_STR=
-```
-
-可选项：
-```
-RTSP_URL_BACKUP_BASE=
-FACE_CONFIDENCE_THRESHOLD=
-FACE_MIN_DETECTION_DURATION=
-TIME_CONFIDENCE_THRESHOLD=
-TIME_PERSON_TIMEOUT=
-RFID_LIB_PATH=
-HEADLESS=
-```
-
-### 3. 运行系统
-```bash
-# 必须在项目根目录下运行
-python src/main.py
-```
-
-### 4. 运行模式
-启动后，系统将自动加载以下服务：
-*   **AssetScanning**: 后台线程，持续盘点 RFID 标签。
-*   **TimeCapture**: 后台线程，监控 RTSP 视频流。
-*   **FaceCapture**: 主线程（前台），显示实时监控窗口（按 `q` 或 `Ctrl+C` 退出）。
+### 4. 访问管理后台
+启动成功后，浏览器访问：`http://<服务器IP>:13999`
+*   查看实时运行日志
+*   调整系统参数
 
 ## 目录结构 (Directory Structure)
 ```
 warehouse/
+├── docker-compose.yml          # 容器编排文件
+├── Dockerfile.warehouse        # 主系统镜像构建文件
+├── Dockerfile.feishu           # 飞书服务镜像构建文件
+├── .env                        # 系统配置文件
 ├── lib/                        # RFID 动态库 (libModuleAPI.so)
-├── origin_scripts/             # 历史/参考脚本
 ├── src/
-│   ├── models/                 # MediaPipe 模型目录
-│   ├── main.py                 # 主程序入口，负责服务编排
-│   ├── plugins/                # 功能插件模块
-│   │   ├── FaceCapture.py      # 入口人脸抓拍模块
-│   │   ├── TimeCapture.py      # 出口离场监控模块
-│   │   ├── AssetScanning.py    # RFID 资产追踪模块
-│   │   ├── ToAgent.py          # 后端通信接口
-│   │   └── MinioUploader.py    # MinIO 文件上传模块
-│   └── config.py               # 配置与日志初始化
-├── doc/                        # 项目文档
-│   ├── design.md               # 详细流程与逻辑说明
-│   └── RFID_mainfunc.md        # RFID 动态库说明
-└── requirements.txt            # 项目依赖
+│   ├── main.py                 # 主程序入口 (System)
+│   ├── web_admin.py            # Web 管理后台入口
+│   ├── config.py               # 配置加载器
+│   ├── static/                 # Web 前端资源 (index.html)
+│   ├── plugins/                # 核心功能插件
+│   │   ├── FaceCapture.py      # 人脸识别 (CompreFace)
+│   │   ├── AssetScanning.py    # 资产追踪 (RFID)
+│   │   ├── TimeCapture.py      # 离场监控
+│   │   ├── MinioUploader.py    # 图片上传 (含限流)
+│   │   └── ToAgent.py          # 后端通信
+│   └── models/                 # MediaPipe 模型文件
+└── requirements.txt            # Python 依赖
 ```
 
-## 配置说明 (Configuration)
-主要配置统一由 `src/config.py` 从 `.env` 载入并提供给各插件：
-
-*   **FaceCapture**: `FACE_API_URL`、`FACE_CONFIDENCE_THRESHOLD`、`FACE_MIN_DETECTION_DURATION`、`HEADLESS`。
-*   **TimeCapture**: `RTSP_URL_TIMECAPTURE`、`TIME_CONFIDENCE_THRESHOLD`、`TIME_PERSON_TIMEOUT`。
-*   **AssetScanning**: `RFID_CONN_STR`、`RFID_LIB_PATH`。
-*   **MinioUploader**: `MINIO_UPLOAD_URL`。
-*   **ToAgent**: `AGENT_BASE_URL`、`EMPLOYEE_ID`、`USER_ID`。
-
-## 贡献者名单 (Contributors)
-[![Contributors](https://contrib.rocks/image?repo=BorderArea01/warehouse)](https://github.com/BorderArea01/warehouse/graphs/contributors)
+## 注意事项
+1.  **USB 权限**: `docker-compose.yml` 中开启了 `privileged: true` 以确保容器能访问 USB 摄像头和串口设备。
+2.  **网络模式**: 使用 `network_mode: host` 是为了确保 RTSP 视频流的稳定性和简化端口映射。
+3.  **日志颜色**: Web 端日志查看器支持 ANSI 颜色代码，若在其他工具查看乱码，请使用支持 ANSI 的终端或 `less -R`。

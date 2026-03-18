@@ -6,6 +6,10 @@ import json
 import datetime
 import requests
 import threading
+from concurrent.futures import ThreadPoolExecutor
+
+# 全局线程池，用于处理耗时任务
+executor = ThreadPoolExecutor(max_workers=10)
 
 # 配置信息
 APP_ID = 'cli_a8d0e0c140169013'
@@ -220,12 +224,12 @@ def do_card_action_trigger(data: P2CardActionTrigger) -> Dict[str, Any]:
 
     if action.name == "confirm_button":
         handler = HANDLERS.get(card_type, handle_default)
-        threading.Thread(target=handler, args=(action, order_number, user_id)).start()
+        executor.submit(handler, action, order_number, user_id)
         toast_content = "确认提交成功！（后台处理中）"
 
     elif action.name == "feedback_button":
         handler = handle_feedback_button_click
-        threading.Thread(target=handler, args=(action, order_number, user_id)).start()
+        executor.submit(handler, action, order_number, user_id)
         toast_content = "反馈已收到，加急处理中。"
     else:
         toast_content = f"已收到表单提交！数据量: {len(action.form_value or {})}"
@@ -242,11 +246,8 @@ def do_card_action_trigger(data: P2CardActionTrigger) -> Dict[str, Any]:
                 "body": {
                     "elements": [
                         {
-                            "tag": "div",
-                            "text": {
-                                "tag": "plain_text",
-                                "content": f"✅ {toast_content}"
-                            }
+                            "tag": "markdown",
+                            "content": f"✅ **{toast_content}**"
                         }
                     ]
                 }

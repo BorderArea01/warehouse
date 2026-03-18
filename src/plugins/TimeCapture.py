@@ -311,12 +311,13 @@ class TimeCapture:
         }
 
         # ANSI Colors
-        COLOR_REQ = "\033[96m"
-        COLOR_RES = "\033[94m"
+        # SEND: Green, RECEIVE: Magenta
+        COLOR_SEND = "\033[92m"
+        COLOR_RECV = "\033[95m"
         COLOR_RESET = "\033[0m"
 
         log_req = (
-            f"\n{COLOR_REQ}{'='*30}\n"
+            f"\n{COLOR_SEND}{'='*30}\n"
             f"[发送] Module: TimeCapture\n"
             f"Sending: {json.dumps(payload, ensure_ascii=False, indent=2)}\n"
             f"{'='*30}{COLOR_RESET}"
@@ -329,7 +330,7 @@ class TimeCapture:
             try:
                 resp_data = resp.json()
                 log_resp = (
-                    f"\n{COLOR_RES}{'='*30}\n"
+                    f"\n{COLOR_RECV}{'='*30}\n"
                     f"[返回] Module: TimeCapture\n"
                     f"Status: {resp.status_code}\n"
                     f"Message: {resp_data.get("data", {}).get("message", "No message")}\n"
@@ -338,7 +339,7 @@ class TimeCapture:
                 logger.info(log_resp)
             except ValueError:
                 log_resp = (
-                    f"\n{COLOR_RES}{'='*30}\n"
+                    f"\n{COLOR_RECV}{'='*30}\n"
                     f"[返回] Module: TimeCapture\n"
                     f"Status: {resp.status_code}\n"
                     f"Response: {resp.text[:200]}...\n"
