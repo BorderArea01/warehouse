@@ -3,6 +3,8 @@ from requests import Session
 from pathlib import Path
 import json
 import logging
+import time
+import threading
 from src.config import Config
 
 logger = Config.get_logger("MinioUploader")
@@ -16,6 +18,10 @@ class MinioUploader:
         # Use Config.MINIO_UPLOAD_URL as default if not provided
         self.upload_url = upload_url or Config.MINIO_UPLOAD_URL
         self.session = session or requests.Session()
+        
+        # Rate Limiting
+        self._last_upload_time = 0.0
+        self._upload_lock = threading.Lock()
 
     def upload_file(
         self,
@@ -30,8 +36,9 @@ class MinioUploader:
         file_size_mb = file_size / 1024 / 1024
         
         # ANSI Colors
-        COLOR_REQ = "\033[96m"
-        COLOR_RES = "\033[94m"
+        # SEND: Green, RECEIVE: Magenta
+        COLOR_SEND = "\033[92m"
+        COLOR_RECV = "\033[95m"
         COLOR_RESET = "\033[0m"
         
         if file_size > 15 * 1024 * 1024:
@@ -45,9 +52,19 @@ class MinioUploader:
             logger.error("【文件类型不支持】")
             raise ValueError(f"文件类型 {file_extension} 不支持，只允许PDF和图片文件")
 
+        # Rate Limiting Logic
+        with self._upload_lock:
+            current_time = time.time()
+            elapsed = current_time - self._last_upload_time
+            if elapsed < 1.0:
+                sleep_time = 1.0 - elapsed
+                logger.debug(f"Rate limit hit. Sleeping for {sleep_time:.2f}s...")
+                time.sleep(sleep_time)
+            self._last_upload_time = time.time()
+
         # Log Request
         log_req = (
-            f"\n{COLOR_REQ}{'='*30}\n"
+            f"\n{COLOR_SEND}{'='*30}\n"
             f"[发送] Module: MinioUploader\n"
             f"Uploading File: {file_path.name}\n"
             f"Size: {file_size_mb:.2f} MB\n"
@@ -75,7 +92,7 @@ class MinioUploader:
 
         # Log Response
         log_resp = (
-            f"\n{COLOR_RES}{'='*30}\n"
+            f"\n{COLOR_RECV}{'='*30}\n"
             f"[返回] Module: MinioUploader\n"
             f"Status: {resp.status_code}\n"
             f"file_url: {data.get('fileUrl', '')}\n"
