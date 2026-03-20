@@ -48,11 +48,11 @@ graph TD
         direction TB
         
         subgraph Container_System [📦 warehouse-system]
-            Face[� FaceCapture<br/>(MediaPipe + CompreFace)]
-            Asset[� AssetScanning<br/>(RFID C++ SDK)]
-            Time[� TimeCapture<br/>(RTSP + MediaPipe)]
-            Web[🖥️ Web Admin<br/>(FastAPI :13999)]
-            MinioUp[☁️ MinioUploader<br/>(Rate Limit: 1s)]
+            Face[👤 FaceCapture <br> MediaPipe + CompreFace]
+            Asset[📦 AssetScanning <br> RFID SDK]
+            Time[🕒 TimeCapture <br> RTSP + MediaPipe]
+            Web[🖥️ Web Admin <br> FastAPI]
+            MinioUp[☁️ MinioUploader <br> Rate Limit 1s]
             
             Face --> MinioUp
             Face --> Web
@@ -61,7 +61,7 @@ graph TD
         end
 
         subgraph Container_Feishu [📦 feishu-longconnect]
-            Feishu[🦅 Feishu Bot<br/>(WebSocket)]
+            Feishu[🦅 Feishu Bot <br> WebSocket]
         end
     end
 
