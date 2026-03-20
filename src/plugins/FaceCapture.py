@@ -82,6 +82,15 @@ class FaceCapture:
         self._inflight_tasks = 0
         self._max_inflight_tasks = 4  # Limit concurrent API calls
         
+        # --- Quality Control & Debounce Logic ---
+        self.capture_window = Config.FACE_CAPTURE_WINDOW  # e.g., 1.0 seconds
+        self.min_quality = Config.FACE_MIN_QUALITY_THRESHOLD # e.g., 0.8
+        
+        # Buffer to hold faces for the current window: list of (crop_img, score, timestamp, bbox)
+        self.face_buffer = []
+        self.window_start_time = 0.0
+        self.is_collecting = False
+        
         # Resources
         self.cap = None
         self.detector = None
@@ -230,6 +239,7 @@ class FaceCapture:
                     valid_crops = []
                     
                     # Process detections
+                    current_faces = []
                     for detection in detections:
                         bbox = detection.bounding_box
                         x1 = int(bbox.origin_x)
@@ -247,22 +257,41 @@ class FaceCapture:
 
                         # Crop face
                         crop_img = self._crop_image(frame, (x1, y1, x2, y2))
-                        valid_crops.append((crop_img, score, (x1, y1, x2, y2)))
+                        current_faces.append((crop_img, score, current_time, (x1, y1, x2, y2)))
 
                         # Draw debug box
                         if not self.headless:
                             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-                    # Submit tasks
-                    for (crop_img, conf, bbox) in valid_crops:
-                        with self._inflight_lock:
-                            if self._inflight_tasks >= self._max_inflight_tasks:
-                                continue # Skip if busy
-                            self._inflight_tasks += 1
+                    
+                    # --- Debounce & Quality Selection Logic ---
+                    if current_faces:
+                        if not self.is_collecting:
+                            # Start a new capture window
+                            self.is_collecting = True
+                            self.window_start_time = current_time
+                            self.face_buffer = []
                         
-                        self.executor.submit(
-                            self.recognize_task, crop_img, current_time, conf
-                        )
+                        self.face_buffer.extend(current_faces)
+                        
+                        # Check if any face exceeds the "immediate capture" threshold
+                        best_face_now = max(current_faces, key=lambda x: x[1])
+                        if best_face_now[1] >= self.min_quality:
+                            self._submit_best_face([best_face_now])
+                            # Reset window to avoid sending again immediately
+                            self.is_collecting = False
+                            self.face_buffer = []
+                    
+                    # Check if window expired
+                    if self.is_collecting and (current_time - self.window_start_time >= self.capture_window):
+                        # Window closed, pick the best face from buffer
+                        if self.face_buffer:
+                            # Pick the one with the highest confidence score
+                            best_buffered_face = max(self.face_buffer, key=lambda x: x[1])
+                            self._submit_best_face([best_buffered_face])
+                        
+                        # Reset for next detection
+                        self.is_collecting = False
+                        self.face_buffer = []
 
                     # Display debug info
                     if not self.headless:
@@ -290,6 +319,19 @@ class FaceCapture:
                 pass
             self.detector = None
             cv2.destroyAllWindows()
+
+    def _submit_best_face(self, face_list):
+        """Submit the best faces to the recognition thread pool."""
+        for (crop_img, conf, capture_time, bbox) in face_list:
+            with self._inflight_lock:
+                if self._inflight_tasks >= self._max_inflight_tasks:
+                    logger.debug("Skipping recognition task, thread pool is full.")
+                    continue
+                self._inflight_tasks += 1
+            
+            self.executor.submit(
+                self.recognize_task, crop_img, capture_time, conf
+            )
 
     def _check_pending_visitor(self):
         """Check if any pending visitor report should be sent."""
@@ -462,6 +504,9 @@ class FaceCapture:
                     if self.pending_visitor_report:
                         logger.info("Discarding buffered visitor report due to User detection.")
                         self.pending_visitor_report = None
+                
+                # Check if this user was already reported within a very short timeframe to prevent double-sends
+                # The user_cooldowns check above already handles this!
                 
                 # Now upload image for the user (delayed upload)
                 self._upload_image_for_record(record)
