@@ -2,6 +2,8 @@ import os
 import shutil
 import re
 import datetime
+import subprocess
+import signal
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
@@ -21,6 +23,51 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 class ConfigUpdate(BaseModel):
     content: str
+
+class ComposeRestartRequest(BaseModel):
+    password: Optional[str] = None
+
+def _run_cmd(cmd: List[str], cwd: str, input_text: Optional[str] = None, timeout_s: int = 300) -> Dict[str, Any]:
+    try:
+        p = subprocess.run(
+            cmd,
+            cwd=cwd,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            timeout=timeout_s,
+        )
+        out = (p.stdout or "") + (p.stderr or "")
+        return {"returncode": p.returncode, "output": out}
+    except FileNotFoundError:
+        return {"returncode": 127, "output": f"Command not found: {cmd[0]}"}
+    except subprocess.TimeoutExpired:
+        return {"returncode": 124, "output": "Command timed out"}
+    except Exception as e:
+        return {"returncode": 1, "output": str(e)}
+
+def _sudo_password_required(output: str) -> bool:
+    o = (output or "").lower()
+    return (
+        "a password is required" in o
+        or "password is required" in o
+        or "sudo: a password is required" in o
+        or "sudo:" in o and "password" in o and "required" in o
+        or "需要密码" in o
+        or ("密码" in o and "需要" in o)
+    )
+
+def _sudo_auth_failed(output: str) -> bool:
+    o = (output or "").lower()
+    return (
+        "sorry, try again" in o
+        or "authentication failure" in o
+        or ("对不起" in o and "重试" in o)
+        or "验证失败" in o
+    )
+
+MAIN_PID_FILE = os.path.join(PROJECT_ROOT, "main.pid")
+RESTART_FLAG_FILE = os.path.join(PROJECT_ROOT, "restart_main.flag")
 
 def parse_date_from_filename(filename: str, filepath: str) -> str:
     """Extract date from filename or fallback to modification time."""
@@ -135,6 +182,34 @@ def update_config(config: ConfigUpdate):
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/compose/restart")
+def compose_restart(req: ComposeRestartRequest):
+    try:
+        with open(RESTART_FLAG_FILE, "w", encoding="utf-8") as f:
+            f.write("1")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    pid = None
+    try:
+        if os.path.exists(MAIN_PID_FILE):
+            with open(MAIN_PID_FILE, "r", encoding="utf-8") as f:
+                pid_text = (f.read() or "").strip()
+            if pid_text:
+                pid = int(pid_text)
+    except Exception:
+        pid = None
+
+    if pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pid = None
+        except PermissionError:
+            raise HTTPException(status_code=500, detail="permission denied to signal main process")
+
+    return {"status": "success", "main_pid_signaled": bool(pid)}
 
 @app.get("/api/config/export")
 def export_config():

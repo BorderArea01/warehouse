@@ -75,16 +75,16 @@
                  <div class="text-sm text-gray-400 mb-4">
                     Modify system configuration (.env). Changes require a system restart to take effect fully.
                 </div>
-                <button @click="saveConfig" class="w-full py-2 bg-blue-600 hover:bg-blue-700 rounded text-white font-medium transition-colors">
+                <button @click="saveConfig" :disabled="restartInProgress" class="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed rounded text-white font-medium transition-colors">
                     Save Changes
                 </button>
-                <button @click="exportConfig" class="w-full py-2 bg-gray-700 hover:bg-gray-600 rounded text-white font-medium transition-colors">
+                <button @click="exportConfig" :disabled="restartInProgress" class="w-full py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-60 disabled:cursor-not-allowed rounded text-white font-medium transition-colors">
                     Export .env
                 </button>
                 
                 <div class="pt-4 border-t border-gray-700">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Import Configuration</label>
-                    <input type="file" ref="fileInput" @change="importConfig" class="block w-full text-sm text-gray-400
+                    <input type="file" ref="fileInput" @change="importConfig" :disabled="restartInProgress" class="block w-full text-sm text-gray-400 disabled:opacity-60 disabled:cursor-not-allowed
                       file:mr-4 file:py-2 file:px-4
                       file:rounded-full file:border-0
                       file:text-sm file:font-semibold
@@ -158,6 +158,18 @@
                 <textarea v-model="configContent" class="flex-1 bg-[#1e1e1e] text-gray-300 p-4 font-mono text-sm resize-none focus:outline-none" spellcheck="false"></textarea>
             </div>
         </div>
+
+        <div v-if="showSudoModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+            <div class="bg-gray-800 border border-gray-700 rounded-lg w-full max-w-md p-4">
+                <div class="text-lg font-semibold mb-2">需要 sudo 密码</div>
+                <div class="text-sm text-gray-400 mb-4">重启容器需要管理员权限，请输入 sudo 密码。</div>
+                <input type="password" v-model="sudoPassword" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 focus:outline-none" placeholder="sudo password" @keyup.enter="confirmSudoRestart" />
+                <div class="mt-4 flex justify-end space-x-2">
+                    <button @click="cancelSudoRestart" :disabled="restartInProgress" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-60 disabled:cursor-not-allowed rounded">取消</button>
+                    <button @click="confirmSudoRestart" :disabled="restartInProgress || !sudoPassword" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed rounded text-white">重启</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -174,6 +186,9 @@
                 const loadingContent = ref(false);
                 const logContainer = ref(null);
                 const isReversed = ref(false);
+                const restartInProgress = ref(false);
+                const showSudoModal = ref(false);
+                const sudoPassword = ref('');
 
                 // Fetch logs list
                 const fetchLogs = async () => {
@@ -322,6 +337,58 @@
                     });
                 }
 
+                const restartCompose = async (password) => {
+                    restartInProgress.value = true;
+                    try {
+                        const body = password ? { password } : {};
+                        const res = await fetch('/api/compose/restart', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+                        const raw = await res.text();
+                        const data = (() => {
+                            try { return JSON.parse(raw); } catch { return {}; }
+                        })();
+                        if (res.ok && data.status === 'success') {
+                            return true;
+                        }
+                        if (res.ok && data.status === 'password_required') {
+                            showSudoModal.value = true;
+                            return false;
+                        }
+                        if (res.status === 401) {
+                            alert('sudo 密码错误');
+                            showSudoModal.value = true;
+                            return false;
+                        }
+                        if (res.status === 405 || data.detail === 'Method Not Allowed') {
+                            alert('后端尚未加载“重启主进程”接口，请先手动重启一次 warehouse-system 容器后再试');
+                            return false;
+                        }
+                        alert(data.detail || '重启失败');
+                        return false;
+                    } catch (e) {
+                        alert(e.message);
+                        return false;
+                    } finally {
+                        restartInProgress.value = false;
+                    }
+                };
+
+                const cancelSudoRestart = () => {
+                    showSudoModal.value = false;
+                    sudoPassword.value = '';
+                };
+
+                const confirmSudoRestart = async () => {
+                    const pw = sudoPassword.value;
+                    sudoPassword.value = '';
+                    showSudoModal.value = false;
+                    const ok = await restartCompose(pw);
+                    if (ok) alert('主进程已重启');
+                };
+
                 // Config Actions
                 const saveConfig = async () => {
                     try {
@@ -330,7 +397,11 @@
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ content: configContent.value })
                         });
-                        if (res.ok) alert('Configuration saved!');
+                        if (res.ok) {
+                            alert('Configuration saved!');
+                            const ok = await restartCompose();
+                            if (ok) alert('主进程已重启');
+                        }
                         else alert('Failed to save');
                     } catch (e) {
                         alert(e.message);
@@ -358,6 +429,8 @@
                         if (res.ok) {
                             alert('Imported successfully!');
                             fetchConfig();
+                            const ok = await restartCompose();
+                            if (ok) alert('主进程已重启');
                         } else {
                             alert('Import failed');
                         }
@@ -394,9 +467,9 @@
 
                 return {
                     currentTab, logGroups, selectedLog, logContent, configContent,
-                    loadingLogs, loadingContent, logContainer, isReversed,
+                    loadingLogs, loadingContent, logContainer, isReversed, restartInProgress, showSudoModal, sudoPassword,
                     isJsonLog, parsedContent,
-                    selectLog, refreshLog, deleteLog, saveConfig, exportConfig, importConfig,
+                    selectLog, refreshLog, deleteLog, saveConfig, exportConfig, importConfig, cancelSudoRestart, confirmSudoRestart,
                     formatLogLine, syntaxHighlight
                 };
             }
