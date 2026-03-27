@@ -42,54 +42,6 @@
 
 ## 系统架构 (Architecture)
 
-```mermaid
-graph TD
-    subgraph Docker_Host [🐳 Docker Host]
-        direction TB
-        
-        subgraph Container_System [📦 warehouse-system]
-            Face[👤 FaceCapture <br> MediaPipe + CompreFace]
-            Asset[📦 AssetScanning <br> RFID SDK]
-            Time[🕒 TimeCapture <br> RTSP + MediaPipe]
-            Web[🖥️ Web Admin <br> FastAPI]
-            MinioUp[☁️ MinioUploader <br> Rate Limit 1s]
-            
-            Face --> MinioUp
-            Face --> Web
-            Asset --> Web
-            Time --> Asset
-        end
-
-        subgraph Container_Feishu [📦 feishu-longconnect]
-            Feishu[🦅 Feishu Bot <br> WebSocket]
-        end
-    end
-
-    subgraph External_Devices [🔌 External Devices]
-        Cam[📷 USB Camera]
-        RTSP[📹 Hikvision RTSP]
-        RFID_HW[📟 RFID Reader<br/>(/dev/ttyACM*)]
-    end
-
-    subgraph Cloud_Services [☁️ Cloud Services]
-        CompreFace[🧠 CompreFace Server]
-        MinIO[🗄️ MinIO Storage]
-        Workflow[⚙️ Backend Workflow]
-        FeishuAPI[🦅 Feishu Open Platform]
-    end
-
-    Cam ==> Face
-    RTSP ==> Time
-    RFID_HW ==> Asset
-    
-    Face -- "Recognize" --> CompreFace
-    MinioUp -- "Upload" --> MinIO
-    Face -- "Report" --> Workflow
-    Time -- "Report" --> Workflow
-    Feishu <-- "WS" --> FeishuAPI
-    Feishu -- "Execute" --> Workflow
-```
-
 ### 核心流程时序图 (Sequence Diagram)
 以下时序图展示了 **FaceCapture** (入口)、**AssetScanning** (资产) 和 **TimeCapture** (出口) 三大模块的协同工作流程。
 
