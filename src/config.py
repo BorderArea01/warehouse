@@ -68,6 +68,8 @@ class Config:
     # Time Capture
     TIME_CONFIDENCE_THRESHOLD = float(os.getenv('TIME_CONFIDENCE_THRESHOLD')) if os.getenv('TIME_CONFIDENCE_THRESHOLD') else 0.6
     TIME_PERSON_TIMEOUT = float(os.getenv('TIME_PERSON_TIMEOUT')) if os.getenv('TIME_PERSON_TIMEOUT') else 15.0
+    TIME_AGENT_API_KEY = os.getenv('TIME_AGENT_API_KEY')
+    TIME_AGENT_WORKFLOW_ID = os.getenv('TIME_AGENT_WORKFLOW_ID')
 
     # Agent Integration
     AGENT_BASE_URL = os.getenv('AGENT_BASE_URL')
