@@ -184,7 +184,7 @@ sequenceDiagram
     *   RFID 读写器 -> `/dev/ttyACM*`
 
 ### 2. 配置 (.env)
-复制 `.env.example` (如果有) 或直接创建 `.env` 文件：
+复制 `.env.example` 并重命名或直接创建 `.env` 文件：
 
 ```properties
 # === 基础配置 ===
