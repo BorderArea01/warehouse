@@ -104,15 +104,11 @@ class TimeCapture:
 
     def _monitor_loop(self):
         """Main loop to read RTSP stream and detect person presence."""
-        # Set OpenCV environment variables to force TCP (Stable like VLC)
-        # Removed 'nobuffer' to allow ffmpeg to smooth out network jitter
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
         
         cap = cv2.VideoCapture(self.rtsp_url)
         if not cap.isOpened():
             logger.error(f"Could not open RTSP stream: {self.rtsp_url}")
-            
-            # Try backup stream if configured
             backup_url = getattr(Config, "RTSP_URL_BACKUP_BASE", None)
             if backup_url:
                 logger.info(f"Attempting backup stream: {backup_url}")
@@ -125,30 +121,36 @@ class TimeCapture:
                 self.running = False
                 return
 
-        logger.info("Connected to Camera. Listening for exit events...")
+        logger.info(f"Connected to Camera ({self.rtsp_url}). Listening for exit events...")
 
-        # Optimization: Skip frames
         frame_count = 0
         skip_frames = 5
-        
-        # State
         last_seen_time = time.time()
+        last_heartbeat = time.time()
+        last_frame_time = time.time()
 
-        # Reader Thread Logic:
-        # We separate frame reading from processing to ensure the buffer is drained continuously.
-        # This prevents "old" frames from piling up while we are processing (inference).
-        # It also mimics VLC's behavior of just playing the stream smoothly.
-        
         self._latest_frame = None
         self._frame_lock = threading.Lock()
         
         def _read_frames():
-            while self.running and cap.isOpened():
+            nonlocal cap, last_frame_time
+            while self.running:
+                if not cap.isOpened():
+                    time.sleep(1.0)
+                    continue
+                    
                 ret, frame = cap.read()
                 if not ret:
-                    # Signal disconnection?
+                    # Log only occasionally to avoid flooding
+                    if time.time() - last_frame_time > 5.0:
+                        logger.warning("RTSP Stream disconnected or no frames received. Attempting to reconnect...")
+                        cap.release()
+                        time.sleep(2.0)
+                        cap = cv2.VideoCapture(self.rtsp_url)
                     time.sleep(0.1)
                     continue
+                
+                last_frame_time = time.time()
                 with self._frame_lock:
                     self._latest_frame = frame.copy()
         
@@ -156,17 +158,25 @@ class TimeCapture:
         reader_thread.start()
 
         while self.running:
+            current_time = time.time()
+            
+            # Heartbeat log every 60 seconds
+            if current_time - last_heartbeat > 60.0:
+                logger.info("TimeCapture Heartbeat: Monitor loop running...")
+                last_heartbeat = current_time
+
             # Check if we have a frame
             frame = None
             with self._frame_lock:
                 if self._latest_frame is not None:
                     frame = self._latest_frame
-                    self._latest_frame = None # Consume it
+                    self._latest_frame = None 
             
             if frame is None:
-                # No new frame yet, or stream issue
-                # Check if capture is still valid?
-                # For now just sleep and wait
+                # If no frames for too long, log it
+                if current_time - last_frame_time > 10.0:
+                    # logger.debug("Waiting for RTSP frames...")
+                    pass
                 time.sleep(0.05)
                 continue
 
@@ -280,13 +290,8 @@ class TimeCapture:
         
         # Simply send the list of EPC strings
         asset_changes_list = record.get('asset_changes', [])
+        user_id = record.get('user_id', 'Unknown')
         
-        # query = (
-        #     f"生成事件集合\n"
-        #     f"时间：{end_str}；\n"
-        #     f"区域：小仓库；\n"
-        #     f"资产变动情况：{json.dumps(asset_changes_list, ensure_ascii=False)}"
-        # )
         api_url = Config.AGENT_WORKFLOW_URL
         headers = {
             "X-API-Key": Config.TIME_AGENT_API_KEY,
@@ -297,7 +302,8 @@ class TimeCapture:
         
         inputs = {
             "time": str(end_str),
-            "zone": "小仓库"
+            "zone": "小仓库",
+            "person_id": str(user_id)
         }
         
         # Only add asset_list if there are changes
