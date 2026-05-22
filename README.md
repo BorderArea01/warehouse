@@ -7,6 +7,8 @@
 1.  **warehouse-system**: 核心业务容器，包含 FaceCapture, AssetScanning, TimeCapture, MinioUploader 以及 Web 管理后台。
 2.  **feishu-longconnect**: 独立容器，负责飞书卡片消息的长连接交互。
 
+![飞书卡片设计](images/feishu_card.png)
+
 ## 核心功能 (Features)
 
 ### 1. 实时人脸检测与抓拍 (FaceCapture)
@@ -39,6 +41,8 @@
 *   **实时日志**: 支持查看 System, Asset, Person 各类日志。
 *   **日志高亮**: 支持 ANSI 颜色解析，**绿色**代表发送请求，**粉色**代表接收响应，一目了然。
 *   **配置管理**: 支持在线修改 `.env` 配置文件并重启生效。
+
+![Web 日志后台](images/logs_web.png)
 
 ## 系统架构 (Architecture)
 
@@ -207,6 +211,11 @@ MINIO_UPLOAD_URL=http://...
 # === RFID ===
 RFID_CONN_STR=/dev/ttyACM0
 RFID_LIB_PATH=./lib/libModuleAPI.so
+
+# === Feishu ===
+FEISHU_APP_ID=your_app_id
+FEISHU_APP_SECRET=your_app_secret
+FEISHU_RECEIVE_ID=your_receive_id
 ```
 
 ### 3. 启动系统

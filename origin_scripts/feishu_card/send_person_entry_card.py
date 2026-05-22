@@ -3,11 +3,16 @@ from lark_oapi.api.im.v1 import *
 import json
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env')
+load_dotenv(dotenv_path)
 
 # 配置信息
-APP_ID = 'REDACTED_APP_ID'
-APP_SECRET = 'REDACTED_APP_SECRET'
-RECEIVE_ID = "REDACTED_RECEIVE_ID" # ou_caa5a3e2bf2b2e99232737f1be08183b
+APP_ID = os.getenv('FEISHU_APP_ID')
+APP_SECRET = os.getenv('FEISHU_APP_SECRET')
+RECEIVE_ID = os.getenv('FEISHU_RECEIVE_ID')
 RECEIVE_ID_TYPE = "open_id"
 
 # 卡片 JSON 文件路径

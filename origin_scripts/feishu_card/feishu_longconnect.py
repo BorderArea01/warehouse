@@ -7,25 +7,30 @@ import datetime
 import requests
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env')
+load_dotenv(dotenv_path)
 
 # 全局线程池，用于处理耗时任务
 executor = ThreadPoolExecutor(max_workers=10)
 
 # 配置信息
-APP_ID = 'REDACTED_APP_ID'
-APP_SECRET = 'REDACTED_APP_SECRET'
+APP_ID = os.getenv('FEISHU_APP_ID')
+APP_SECRET = os.getenv('FEISHU_APP_SECRET')
 
 # API 配置
 FEEDBACK_API = {
-    "url": "http://private-host:8088/open/workflow/execute",
-    "key": "REDACTED_WF_KEY_1",
-    "id": "REDACTED_ID_1"
+    "url": os.getenv('AGENT_WORKFLOW_URL', "http://private-host:8088/open/workflow/execute"),
+    "key": os.getenv('FEISHU_FEEDBACK_API_KEY'),
+    "id": os.getenv('FEISHU_FEEDBACK_API_ID')
 }
 
 CONFIRM_API = {
-    "url": "http://private-host:8088/open/workflow/execute",
-    "key": "REDACTED_WF_KEY_2",
-    "id": "REDACTED_ID_2"
+    "url": os.getenv('AGENT_WORKFLOW_URL', "http://private-host:8088/open/workflow/execute"),
+    "key": os.getenv('FEISHU_CONFIRM_API_KEY'),
+    "id": os.getenv('FEISHU_CONFIRM_API_ID')
 }
 
 def log_info(title, content):
