@@ -1,121 +1,121 @@
-# 仓库监控系统配置与逻辑说明 (Warehouse Monitoring System Config)
-
-## 一、人脸捕获 (Face Capture)
-> 源码位置: [`src/plugins/FaceCapture.py`](src/plugins/FaceCapture.py)
-
-### 1. 实时监控与人脸检测
-- **摄像头常开**：程序会打开本地摄像头（Index 0）并保持常开。
-- **AI 模型**：使用 `MediaPipe ObjectDetector` (EfficientDet-Lite0) 实时检测画面中的**人**。
-- **防误触 (Debounce)**：只有当人持续出现在画面中超过 **0.6秒** 时，才会被认定为有效进入，防止光影或飞虫造成的误报。
-- **资源优化逻辑**：
-    1. **距离过滤**：仅当检测到的人员在画面中占比超过 **8%** 时才触发识别，避免处理远处背景路人。
-    2. **频率控制**：识别请求间隔调整为 **1.0秒**（平衡响应速度与性能），减轻服务器并发压力。
-    3. **状态校验**：识别成功后，会检查今日日志中该人员是否已有未结束的进入记录。若已在场，则不再重复记录和上报。
-    4. **冷却机制**：
-        - **普通人员**：识别成功后进入 **5秒** 冷却期。
-        - **游客/Visitor**：识别成功后进入 **1秒** 冷却期（便于快速通行）。
-
-### 2. 自动抓拍与即时上报
-- **抓拍触发**：一旦确认有人进入且满足上述条件，程序会每隔 **1.0秒** 触发一次上报逻辑。
-- **多人并行上报 (Async)**：
-  - **多线程加速**：程序使用 **线程池 (ThreadPool)** 并发处理所有上报请求。
-  - **独立裁剪**：遍历当前画面
-  
-  中所有检测到的人，分别裁剪出每个人（包含10%背景）的图片进行上传。
-- **数据上报**：人员进入时，**立即**调用 Agent 接口上报“进入事件”（包含时间、身份、置信度、**抓拍图片链接**，不含结束时间）。
-
-### 3. 图片上传 (MinioUploader)
-> 源码位置: [`src/plugins/Uploader.py`](src/plugins/Uploader.py)
-
-- **自动上传**：在 `FaceCapture` 识别成功后，系统会自动将抓拍的人脸图片上传至 MinIO 服务器。
-- **链接集成**：上传成功后获取的 `fileUrl` 会被自动附加到发送给 Agent 的所有报告中（包括进入和离开事件）。
-
----
-
-## 二、资产流水 (Asset Scanning)
-> 源码位置: [`src/plugins/AssetScanning.py`](src/plugins/AssetScanning.py)
-
-1. **门框模式**：RFID 天线安装在门框，标签经过时会短暂被读取。
-2. **日志记录**：
-   - 当标签被读取到时，记录 `online` 事件。
-   - 当标签消失超过 3 秒时，记录 `offline` 事件。
-   - 日志实时写入 `logs/asset/YYYY-MM-DD_asset_log.jsonl`。
-3. **变动分析 (Analysis)**：当 `TimeCapture` 判定人员离开时，触发分析逻辑：
-   - 扫描该时段内的 `online` 和 `offline` 日志。
-   - 将同一 EPC 的成对 `online` -> `offline` 记录重建为一次“状态变动 (Toggle)”会话。
-   - **去重逻辑**：
-     - 如果某 EPC 在该时段内出现了偶数次变动（如：进 -> 出），视为状态复原，不上报。
-     - 仅上报出现奇数次变动的 EPC（取最后一次变动详情）。
-4. **数据上报**：
-   - 向服务器发送去重后的 EPC 列表和变动详情。
-   - 文本消息仅包含变动发生的时间点（End Time）。
-
----
-
-## 三、结束时间获取与上报 (Time Capture)
-> 源码位置: [`src/plugins/TimeCapture.py`](src/plugins/TimeCapture.py)
-
-通过海康摄像头（仓库全景）监测人员是否离开。
-
-1. **离开判定**：当检测到仓库内无人（连续 **5秒** 无活动）时，判定为一次“离开事件”。
-2. **记录查找**：系统扫描本地 JSON 记录，查找所有状态为“进行中”的记录。
-3. **时长计算**：将当前时间作为这些记录的“结束时间”，并计算停留时长。
-4. **联动分析**：触发 `AssetScanning` 进行资产变动分析。
-5. **数据上报**：**仅在此刻，将包含完整开始时间、结束时间、**抓拍图片链接**的记录上报给服务器 Agent，写入数据库。**
-
----
-
-## 四、远端录像备份 (Remote Video Backup)
-> 源码位置: [`src/plugins/VideoBackup.py`](src/plugins/VideoBackup.py)
-
-在树莓派之外的服务器运行。获取到人员进出流水的时间信息之后，去仓库摄像头截取对应时间段的录像备份。
-
----
-
-## 五、环境配置说明 (Environment Config)
-
-### 硬件设备
-- **主机**: 树莓派 Pi 5
-- **摄像头**: 海康摄像头（仓库全景），串口摄像头模块（人脸捕获）
-- **传感器**: RFID 射频模块（串口）
-
-### 接口与流媒体
-- **仓库摄像头视频流**:
-  ```
-  rtsp://user:password@camera-host:554/Streaming/Channels/101
-  ```
-- **服务器人脸识别接口**:
-  ```
-  http://private-host:8088/system/visitorRecord/recognizeFace
-  ```
-- **服务器 Agent 接口**:
-  ```
-  http://your-agent-host/api/system/employee/webhook/invoke
-  ```
-- **MinIO 文件上传接口**:
-  ```
-  http://your-agent-host/api/system/file/upload
-  ```
-
----
-
-## 六、日志与调试 (Logging & Debugging)
-
-### 1. 运行日志
-系统运行时会产生以下日志文件，所有日志均支持自动按日轮转：
-- **系统运行日志**: `logs/system/main_run.log`
-  - 记录程序启动、停止、模块初始化状态以及与服务器交互的简要信息。
-  - **交互日志格式**（支持 ANSI 颜色高亮）:
-    - 发送 (Cyan): `[POST] Module: FaceCapture ...`
-    - 接收 (Blue): `[POST] Module: FaceCapture Server Response ...`
-- **资产日志**: `logs/asset/YYYY-MM-DD_asset_log.jsonl`
-  - 记录原始事件：`online` (上线) 与 `offline` (下线/消失)。
-- **人员日志**: `logs/person/YYYY-MM-DD_visit_records.jsonl`
-  - 记录人员进入、身份识别结果以及离场闭环的完整数据。
-
-### 2. 权限说明
-RFID 模块通常挂载为 `/dev/ttyACM0` （ACM0~2）。为了避免每次手动赋权，建议将当前用户加入 `dialout` 组：
-```bash
-sudo usermod -aG dialout $USER
-# 设置后需注销或重启生效
-```
+# 仓库监控系统配置与逻辑说明 (Warehouse Monitoring System Config)
+
+## 一、人脸捕获 (Face Capture)
+> 源码位置: [`src/plugins/FaceCapture.py`](src/plugins/FaceCapture.py)
+
+### 1. 实时监控与人脸检测
+- **摄像头常开**：程序会打开本地摄像头（Index 0）并保持常开。
+- **AI 模型**：使用 `MediaPipe ObjectDetector` (EfficientDet-Lite0) 实时检测画面中的**人**。
+- **防误触 (Debounce)**：只有当人持续出现在画面中超过 **0.6秒** 时，才会被认定为有效进入，防止光影或飞虫造成的误报。
+- **资源优化逻辑**：
+    1. **距离过滤**：仅当检测到的人员在画面中占比超过 **8%** 时才触发识别，避免处理远处背景路人。
+    2. **频率控制**：识别请求间隔调整为 **1.0秒**（平衡响应速度与性能），减轻服务器并发压力。
+    3. **状态校验**：识别成功后，会检查今日日志中该人员是否已有未结束的进入记录。若已在场，则不再重复记录和上报。
+    4. **冷却机制**：
+        - **普通人员**：识别成功后进入 **5秒** 冷却期。
+        - **游客/Visitor**：识别成功后进入 **1秒** 冷却期（便于快速通行）。
+
+### 2. 自动抓拍与即时上报
+- **抓拍触发**：一旦确认有人进入且满足上述条件，程序会每隔 **1.0秒** 触发一次上报逻辑。
+- **多人并行上报 (Async)**：
+  - **多线程加速**：程序使用 **线程池 (ThreadPool)** 并发处理所有上报请求。
+  - **独立裁剪**：遍历当前画面
+  
+  中所有检测到的人，分别裁剪出每个人（包含10%背景）的图片进行上传。
+- **数据上报**：人员进入时，**立即**调用 Agent 接口上报“进入事件”（包含时间、身份、置信度、**抓拍图片链接**，不含结束时间）。
+
+### 3. 图片上传 (MinioUploader)
+> 源码位置: [`src/plugins/Uploader.py`](src/plugins/Uploader.py)
+
+- **自动上传**：在 `FaceCapture` 识别成功后，系统会自动将抓拍的人脸图片上传至 MinIO 服务器。
+- **链接集成**：上传成功后获取的 `fileUrl` 会被自动附加到发送给 Agent 的所有报告中（包括进入和离开事件）。
+
+---
+
+## 二、资产流水 (Asset Scanning)
+> 源码位置: [`src/plugins/AssetScanning.py`](src/plugins/AssetScanning.py)
+
+1. **门框模式**：RFID 天线安装在门框，标签经过时会短暂被读取。
+2. **日志记录**：
+   - 当标签被读取到时，记录 `online` 事件。
+   - 当标签消失超过 3 秒时，记录 `offline` 事件。
+   - 日志实时写入 `logs/asset/YYYY-MM-DD_asset_log.jsonl`。
+3. **变动分析 (Analysis)**：当 `TimeCapture` 判定人员离开时，触发分析逻辑：
+   - 扫描该时段内的 `online` 和 `offline` 日志。
+   - 将同一 EPC 的成对 `online` -> `offline` 记录重建为一次“状态变动 (Toggle)”会话。
+   - **去重逻辑**：
+     - 如果某 EPC 在该时段内出现了偶数次变动（如：进 -> 出），视为状态复原，不上报。
+     - 仅上报出现奇数次变动的 EPC（取最后一次变动详情）。
+4. **数据上报**：
+   - 向服务器发送去重后的 EPC 列表和变动详情。
+   - 文本消息仅包含变动发生的时间点（End Time）。
+
+---
+
+## 三、结束时间获取与上报 (Time Capture)
+> 源码位置: [`src/plugins/TimeCapture.py`](src/plugins/TimeCapture.py)
+
+通过海康摄像头（仓库全景）监测人员是否离开。
+
+1. **离开判定**：当检测到仓库内无人（连续 **5秒** 无活动）时，判定为一次“离开事件”。
+2. **记录查找**：系统扫描本地 JSON 记录，查找所有状态为“进行中”的记录。
+3. **时长计算**：将当前时间作为这些记录的“结束时间”，并计算停留时长。
+4. **联动分析**：触发 `AssetScanning` 进行资产变动分析。
+5. **数据上报**：**仅在此刻，将包含完整开始时间、结束时间、**抓拍图片链接**的记录上报给服务器 Agent，写入数据库。**
+
+---
+
+## 四、远端录像备份 (Remote Video Backup)
+> 源码位置: [`src/plugins/VideoBackup.py`](src/plugins/VideoBackup.py)
+
+在树莓派之外的服务器运行。获取到人员进出流水的时间信息之后，去仓库摄像头截取对应时间段的录像备份。
+
+---
+
+## 五、环境配置说明 (Environment Config)
+
+### 硬件设备
+- **主机**: 树莓派 Pi 5
+- **摄像头**: 海康摄像头（仓库全景），串口摄像头模块（人脸捕获）
+- **传感器**: RFID 射频模块（串口）
+
+### 接口与流媒体
+- **仓库摄像头视频流**:
+  ```
+  rtsp://user:password@camera-host:554/Streaming/Channels/101
+  ```
+- **服务器人脸识别接口**:
+  ```
+  http://your-face-service-host/system/visitorRecord/recognizeFace
+  ```
+- **服务器 Agent 接口**:
+  ```
+  http://your-agent-host/api/system/employee/webhook/invoke
+  ```
+- **MinIO 文件上传接口**:
+  ```
+  http://your-file-service-host/api/system/file/upload
+  ```
+
+---
+
+## 六、日志与调试 (Logging & Debugging)
+
+### 1. 运行日志
+系统运行时会产生以下日志文件，所有日志均支持自动按日轮转：
+- **系统运行日志**: `logs/system/main_run.log`
+  - 记录程序启动、停止、模块初始化状态以及与服务器交互的简要信息。
+  - **交互日志格式**（支持 ANSI 颜色高亮）:
+    - 发送 (Cyan): `[POST] Module: FaceCapture ...`
+    - 接收 (Blue): `[POST] Module: FaceCapture Server Response ...`
+- **资产日志**: `logs/asset/YYYY-MM-DD_asset_log.jsonl`
+  - 记录原始事件：`online` (上线) 与 `offline` (下线/消失)。
+- **人员日志**: `logs/person/YYYY-MM-DD_visit_records.jsonl`
+  - 记录人员进入、身份识别结果以及离场闭环的完整数据。
+
+### 2. 权限说明
+RFID 模块通常挂载为 `/dev/ttyACM0` （ACM0~2）。为了避免每次手动赋权，建议将当前用户加入 `dialout` 组：
+```bash
+sudo usermod -aG dialout $USER
+# 设置后需注销或重启生效
+```

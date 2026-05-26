@@ -1,6 +1,6 @@
 # 参数项
 请求头：(Authorization)
-your-tenant-access-token
+Bearer your-tenant-access-token
 请求体：(图片通过代码上传)
 ```json
 {
